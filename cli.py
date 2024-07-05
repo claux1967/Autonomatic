@@ -478,7 +478,7 @@ def benchmark_tests_details(test_name):
                 continue
 
 
-def wait_until_conn_ready(port: int = 8000, timeout: int = 30):
+def wait_until_conn_ready(port: int = 8080, timeout: int = 30):
     """
     Polls localhost:{port} until it is available for connections
 
