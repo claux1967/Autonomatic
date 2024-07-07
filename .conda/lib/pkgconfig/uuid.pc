@@ -1,0 +1,11 @@
+prefix=/workspaces/Autonomatic/.conda
+exec_prefix=/workspaces/Autonomatic/.conda
+libdir=/workspaces/Autonomatic/.conda/lib
+includedir=/workspaces/Autonomatic/.conda/include
+
+Name: uuid
+Description: Universally unique id library
+Version: 2.32.1
+Requires:
+Cflags: -I${includedir}/uuid
+Libs: -L${libdir} -luuid

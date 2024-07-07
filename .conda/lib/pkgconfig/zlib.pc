@@ -1,0 +1,13 @@
+prefix=/workspaces/Autonomatic/.conda
+exec_prefix=/workspaces/Autonomatic/.conda
+libdir=/workspaces/Autonomatic/.conda/lib
+sharedlibdir=/workspaces/Autonomatic/.conda/lib
+includedir=/workspaces/Autonomatic/.conda/include
+
+Name: zlib
+Description: zlib compression library
+Version: 1.2.13
+
+Requires:
+Libs: -L${libdir} -L${sharedlibdir} -lz
+Cflags: -I${includedir}
