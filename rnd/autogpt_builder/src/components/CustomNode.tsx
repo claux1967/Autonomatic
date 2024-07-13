@@ -5,7 +5,6 @@ import './customnode.css';
 import ModalComponent from './ModalComponent';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
-import { Textarea } from './ui/textarea';
 
 type Schema = {
   type: string;
@@ -34,6 +33,7 @@ type CustomNodeData = {
 
 const CustomNode: FC<NodeProps<CustomNodeData>> = ({ data, id }) => {
   const [isPropertiesOpen, setIsPropertiesOpen] = useState(data.isPropertiesOpen || false);
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const [keyValuePairs, setKeyValuePairs] = useState<{ key: string, value: string }[]>([]);
   const [newKey, setNewKey] = useState<string>('');
   const [newValue, setNewValue] = useState<string>('');
@@ -54,6 +54,16 @@ const CustomNode: FC<NodeProps<CustomNodeData>> = ({ data, id }) => {
 
   const toggleProperties = () => {
     setIsPropertiesOpen(!isPropertiesOpen);
+  };
+
+  const toggleAdvancedSettings = () => {
+    setIsAdvancedOpen(!isAdvancedOpen);
+  };
+
+  const hasOptionalFields = () => {
+    return data.inputSchema && Object.keys(data.inputSchema.properties).some((key) => {
+      return !(data.inputSchema.required?.includes(key));
+    });
   };
 
   const generateHandles = (schema: Schema, type: 'source' | 'target') => {
@@ -392,39 +402,41 @@ const CustomNode: FC<NodeProps<CustomNodeData>> = ({ data, id }) => {
     return Object.values(newErrors).every((error) => error === null);
   };
 
-  const handleSubmit = () => {
-    if (validateInputs()) {
-      console.log("Valid data:", data.hardcodedValues);
-    } else {
-      console.log("Invalid data:", errors);
-    }
-  };
-
   return (
-    <div className={`custom-node dark-theme ${data.status === 'RUNNING' ? 'running' : data.status === 'COMPLETED' ? 'completed' : ''}`}>
+    <div className={`custom-node dark-theme ${data.status === 'RUNNING' ? 'running' : data.status === 'COMPLETED' ? 'completed' : data.status === 'FAILED' ? 'failed' :''}`}>
       <div className="node-header">
         <div className="node-title">{data.blockType || data.title}</div>
-        <Button onClick={toggleProperties} className="toggle-button">
-          &#9776;
-        </Button>
+        <div className="node-buttons">
+          <Button onClick={toggleProperties} className="toggle-button">
+            &#9776;
+          </Button>
+          {hasOptionalFields() && (
+            <Button onClick={toggleAdvancedSettings} className="toggle-button">
+              &#9881;
+            </Button>
+          )}
+        </div>
       </div>
       <div className="node-content">
         <div className="input-section">
           {data.inputSchema &&
-            Object.entries(data.inputSchema.properties).map(([key, schema]) => (
-              <div key={key}>
-                <div className="handle-container">
-                  <Handle
-                    type="target"
-                    position={Position.Left}
-                    id={key}
-                    style={{ background: '#555', borderRadius: '50%' }}
-                  />
-                  <span className="handle-label">{key}</span>
+            Object.entries(data.inputSchema.properties).map(([key, schema]) => {
+              const isRequired = data.inputSchema.required?.includes(key);
+              return (isRequired || isAdvancedOpen) && (
+                <div key={key}>
+                  <div className="handle-container">
+                    <Handle
+                      type="target"
+                      position={Position.Left}
+                      id={key}
+                      style={{ background: '#555', borderRadius: '50%' }}
+                    />
+                    <span className="handle-label">{key}</span>
+                  </div>
+                  {renderInputField(key, schema)}
                 </div>
-                {renderInputField(key, schema)}
-              </div>
-            ))}
+              );
+            })}
         </div>
         <div className="output-section">
           {data.outputSchema && generateHandles(data.outputSchema, 'source')}
@@ -445,12 +457,12 @@ const CustomNode: FC<NodeProps<CustomNodeData>> = ({ data, id }) => {
           </p>
         </div>
       )}
-      <Button onClick={handleSubmit}>Submit</Button>
       <ModalComponent
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         onSave={handleModalSave}
         value={modalValue}
+        key={activeKey}
       />
     </div>
   );
