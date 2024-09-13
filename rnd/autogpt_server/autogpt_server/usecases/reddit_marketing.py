@@ -1,7 +1,10 @@
-from autogpt_server.blocks.llm import ObjectLlmCallBlock
-from autogpt_server.blocks.reddit import RedditGetPostsBlock, RedditPostCommentBlock
-from autogpt_server.blocks.text import TextFormatterBlock, TextMatcherBlock
+from prisma.models import User
+
+from autogpt_server.blocks.llm import AIStructuredResponseGeneratorBlock
+from autogpt_server.blocks.reddit import GetRedditPostsBlock, PostRedditCommentBlock
+from autogpt_server.blocks.text import FillTextTemplateBlock, MatchTextPatternBlock
 from autogpt_server.data.graph import Graph, Link, Node, create_graph
+from autogpt_server.data.user import get_or_create_user
 from autogpt_server.util.test import SpinTestServer, wait_execution
 
 
@@ -10,25 +13,25 @@ def create_test_graph() -> Graph:
                     subreddit
                        ||
                         v
-        RedditGetPostsBlock (post_id, post_title, post_body)
+        GetRedditPostsBlock (post_id, post_title, post_body)
                   //     ||     \\
               post_id  post_title  post_body
                  ||       ||        ||
                  v        v         v
-              TextFormatterBlock (format)
+              FillTextTemplateBlock (format)
                       ||
                       v
-            ObjectLlmCallBlock / TextRelevancy
+            AIStructuredResponseBlock / TextRelevancy
                  ||       ||       ||
             post_id  is_relevant  marketing_text
                ||       ||        ||
                v        v         v
-                 TextMatcherBlock
+                 MatchTextPatternBlock
                  ||       ||
               positive  negative
                 ||
                 v
-        RedditPostCommentBlock
+        PostRedditCommentBlock
     """
     # Hardcoded inputs
     reddit_get_post_input = {
@@ -61,20 +64,22 @@ Make sure to only comment on a relevant post.
 
     # Nodes
     reddit_get_post_node = Node(
-        block_id=RedditGetPostsBlock().id,
+        block_id=GetRedditPostsBlock().id,
         input_default=reddit_get_post_input,
     )
     text_formatter_node = Node(
-        block_id=TextFormatterBlock().id,
+        block_id=FillTextTemplateBlock().id,
         input_default=text_formatter_input,
     )
-    llm_call_node = Node(block_id=ObjectLlmCallBlock().id, input_default=llm_call_input)
+    llm_call_node = Node(
+        block_id=AIStructuredResponseGeneratorBlock().id, input_default=llm_call_input
+    )
     text_matcher_node = Node(
-        block_id=TextMatcherBlock().id,
+        block_id=MatchTextPatternBlock().id,
         input_default=text_matcher_input,
     )
     reddit_comment_node = Node(
-        block_id=RedditPostCommentBlock().id,
+        block_id=PostRedditCommentBlock().id,
         input_default=reddit_comment_input,
     )
 
@@ -92,7 +97,7 @@ Make sure to only comment on a relevant post.
             source_id=reddit_get_post_node.id,
             sink_id=text_formatter_node.id,
             source_name="post",
-            sink_name="named_texts",
+            sink_name="values",
         ),
         Link(
             source_id=text_formatter_node.id,
@@ -136,14 +141,29 @@ Make sure to only comment on a relevant post.
     return test_graph
 
 
+async def create_test_user() -> User:
+    test_user_data = {
+        "sub": "ef3b97d7-1161-4eb4-92b2-10c24fb154c1",
+        "email": "testuser@example.com",
+        "name": "Test User",
+    }
+    user = await get_or_create_user(test_user_data)
+    return user
+
+
 async def reddit_marketing_agent():
     async with SpinTestServer() as server:
         exec_man = server.exec_manager
-        test_graph = await create_graph(create_test_graph())
+        test_user = await create_test_user()
+        test_graph = await create_graph(create_test_graph(), user_id=test_user.id)
         input_data = {"subreddit": "AutoGPT"}
-        response = await server.agent_server.execute_graph(test_graph.id, input_data)
+        response = await server.agent_server.execute_graph(
+            test_graph.id, input_data, test_user.id
+        )
         print(response)
-        result = await wait_execution(exec_man, test_graph.id, response["id"], 13, 120)
+        result = await wait_execution(
+            exec_man, test_user.id, test_graph.id, response["id"], 13, 120
+        )
         print(result)
 
 

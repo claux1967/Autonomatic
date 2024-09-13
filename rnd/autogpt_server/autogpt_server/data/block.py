@@ -7,6 +7,7 @@ import jsonschema
 from prisma.models import AgentBlock
 from pydantic import BaseModel
 
+from autogpt_server.data.model import ContributorDetails
 from autogpt_server.util import json
 
 BlockData = tuple[str, Any]  # Input & Output data should be a tuple of (name, data).
@@ -15,12 +16,26 @@ BlockOutput = Generator[BlockData, None, None]  # Output: 1 output pin produces 
 CompletedBlockOutput = dict[str, list[Any]]  # Completed stream, collected as a dict.
 
 
+class BlockUIType(Enum):
+    """
+    The type of Node UI to be displayed in the builder for this block.
+    """
+
+    STANDARD = "Standard"
+    INPUT = "Input"
+    OUTPUT = "Output"
+    NOTE = "Note"
+
+
 class BlockCategory(Enum):
-    LLM = "Block that leverages the Large Language Model to perform a task."
+    AI = "Block that leverages AI to perform a task."
     SOCIAL = "Block that interacts with social media platforms."
     TEXT = "Block that processes text data."
     SEARCH = "Block that searches or extracts information from the internet."
     BASIC = "Block that performs basic operations."
+    INPUT = "Block that interacts with input of the graph."
+    OUTPUT = "Block that interacts with output of the graph."
+    LOGIC = "Programming logic to control the flow of your agent"
 
     def dict(self) -> dict[str, str]:
         return {"category": self.name, "description": self.value}
@@ -55,6 +70,12 @@ class BlockSchema(BaseModel):
             return obj
 
         cls.cached_jsonschema = cast(dict[str, Any], ref_to_dict(model))
+
+        # Set default properties values
+        for field in cls.cached_jsonschema.get("properties", {}).values():
+            if isinstance(field, dict) and "advanced" not in field:
+                field["advanced"] = True
+
         return cls.cached_jsonschema
 
     @classmethod
@@ -115,12 +136,16 @@ class Block(ABC, Generic[BlockSchemaInputType, BlockSchemaOutputType]):
         self,
         id: str = "",
         description: str = "",
+        contributors: list[ContributorDetails] = [],
         categories: set[BlockCategory] | None = None,
         input_schema: Type[BlockSchemaInputType] = EmptySchema,
         output_schema: Type[BlockSchemaOutputType] = EmptySchema,
         test_input: BlockInput | list[BlockInput] | None = None,
         test_output: BlockData | list[BlockData] | None = None,
         test_mock: dict[str, Any] | None = None,
+        disabled: bool = False,
+        static_output: bool = False,
+        ui_type: BlockUIType = BlockUIType.STANDARD,
     ):
         """
         Initialize the block with the given schema.
@@ -129,11 +154,15 @@ class Block(ABC, Generic[BlockSchemaInputType, BlockSchemaOutputType]):
             id: The unique identifier for the block, this value will be persisted in the
                 DB. So it should be a unique and constant across the application run.
                 Use the UUID format for the ID.
+            description: The description of the block, explaining what the block does.
+            contributors: The list of contributors who contributed to the block.
             input_schema: The schema, defined as a Pydantic model, for the input data.
             output_schema: The schema, defined as a Pydantic model, for the output data.
             test_input: The list or single sample input data for the block, for testing.
             test_output: The list or single expected output if the test_input is run.
             test_mock: function names on the block implementation to mock on test run.
+            disabled: If the block is disabled, it will not be available for execution.
+            static_output: Whether the output links of the block are static by default.
         """
         self.id = id
         self.input_schema = input_schema
@@ -143,6 +172,10 @@ class Block(ABC, Generic[BlockSchemaInputType, BlockSchemaOutputType]):
         self.test_mock = test_mock
         self.description = description
         self.categories = categories or set()
+        self.contributors = contributors or set()
+        self.disabled = disabled
+        self.static_output = static_output
+        self.ui_type = ui_type
 
     @abstractmethod
     def run(self, input_data: BlockSchemaInputType) -> BlockOutput:
@@ -169,6 +202,11 @@ class Block(ABC, Generic[BlockSchemaInputType, BlockSchemaOutputType]):
             "outputSchema": self.output_schema.jsonschema(),
             "description": self.description,
             "categories": [category.dict() for category in self.categories],
+            "contributors": [
+                contributor.model_dump() for contributor in self.contributors
+            ],
+            "staticOutput": self.static_output,
+            "uiType": self.ui_type.value,
         }
 
     def execute(self, input_data: BlockInput) -> BlockOutput:

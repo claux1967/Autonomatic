@@ -37,8 +37,8 @@ jobs:
       - name: Setup PostgreSQL
         uses: ikalnytskyi/action-setup-postgres@v6
         with:
-          username: ${{ secrets.DB_USER }}
-          password: ${{ secrets.DB_PASS }}
+          username: ${{ secrets.DB_USER || 'postgres' }}
+          password: ${{ secrets.DB_PASS || 'postgres' }}
           database: postgres
           port: 5432
         id: postgres
@@ -115,31 +115,38 @@ jobs:
         run: poetry install
 
       - name: Generate Prisma Client
-        run: poetry run prisma generate --schema postgres/schema.prisma
+        run: poetry run prisma generate
 
       - name: Run Database Migrations
-        run: poetry run prisma migrate dev --schema postgres/schema.prisma --name updates
+        run: poetry run prisma migrate dev --name updates
         env:
           CONNECTION_STR: ${{ steps.postgres.outputs.connection-uri }}
 
-      - name: Run Linter
+      - id: lint
+        name: Run Linter
         run: poetry run lint
 
       - name: Run pytest with coverage
         run: |
-          poetry run pytest -vv \
-            test
+          if [[ "${{ runner.debug }}" == "1" ]]; then
+            poetry run pytest -vv -o log_cli=true -o log_cli_level=DEBUG test
+          else
+            poetry run pytest -vv test
+          fi
+        if: success() || (failure() && steps.lint.outcome == 'failure')
+        env:
+          LOG_LEVEL: ${{ runner.debug && 'DEBUG' || 'INFO' }}
     env:
       CI: true
       PLAIN_OUTPUT: True
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      DB_USER: ${{ secrets.DB_USER }}
-      DB_PASS: ${{ secrets.DB_PASS }}
+      DB_USER: ${{ secrets.DB_USER || 'postgres' }}
+      DB_PASS: ${{ secrets.DB_PASS || 'postgres' }}
       DB_NAME: postgres
       DB_PORT: 5432
       RUN_ENV: local
       PORT: 8080
-      DATABASE_URL: postgresql://${{ secrets.DB_USER }}:${{ secrets.DB_PASS }}@localhost:5432/${{ secrets.DB_NAME }}
+      DATABASE_URL: postgresql://${{ secrets.DB_USER || 'postgres' }}:${{ secrets.DB_PASS || 'postgres' }}@localhost:5432/${{ secrets.DB_NAME || 'postgres'}}
 
       # - name: Upload coverage reports to Codecov
       #   uses: codecov/codecov-action@v4

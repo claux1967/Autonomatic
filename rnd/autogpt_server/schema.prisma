@@ -1,6 +1,7 @@
+// THIS FILE IS AUTO-GENERATED, RUN `poetry run schema` TO UPDATE
 datasource db {
-  provider = "sqlite"
-  url      = "file:./database.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 generator client {
@@ -9,19 +10,47 @@ generator client {
   interface            = "asyncio"
 }
 
+// User model to mirror Auth provider users
+model User {
+  id        String   @id // This should match the Supabase user ID
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  AgentGraphs                  AgentGraph[]
+  AgentGraphExecutions         AgentGraphExecution[]
+  AgentGraphExecutionSchedules AgentGraphExecutionSchedule[]
+
+  @@index([id])
+  @@index([email])
+}
+
 // This model describes the Agent Graph/Flow (Multi Agent System).
 model AgentGraph {
   id      String @default(uuid())
   version Int    @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime? @updatedAt
 
   name        String?
   description String?
   isActive    Boolean @default(true)
   isTemplate  Boolean @default(false)
 
+  // Link to User model
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
   AgentNodes                  AgentNode[]
   AgentGraphExecution         AgentGraphExecution[]
   AgentGraphExecutionSchedule AgentGraphExecutionSchedule[]
+
+  // All sub-graphs are defined within this 1-level depth list (even if it's a nested graph).
+  AgentSubGraphs     AgentGraph[] @relation("AgentSubGraph")
+  agentGraphParentId String?
+  AgentGraphParent   AgentGraph?  @relation("AgentSubGraph", fields: [agentGraphParentId, version], references: [id, version])
 
   @@id(name: "graphVersionId", [id, version])
 }
@@ -65,6 +94,9 @@ model AgentNodeLink {
   agentNodeSinkId String
   AgentNodeSink   AgentNode @relation("AgentNodeSink", fields: [agentNodeSinkId], references: [id])
   sinkName        String
+
+  // Default: the data coming from the source can only be consumed by the sink once, Static: input data will be reused.
+  isStatic Boolean @default(false)
 }
 
 // This model describes a component that will be executed by the AgentNode.
@@ -84,12 +116,20 @@ model AgentBlock {
 // This model describes the execution of an AgentGraph.
 model AgentGraphExecution {
   id String @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime? @updatedAt
 
   agentGraphId      String
   agentGraphVersion Int        @default(1)
   AgentGraph        AgentGraph @relation(fields: [agentGraphId, agentGraphVersion], references: [id, version])
 
   AgentNodeExecutions AgentNodeExecution[]
+
+  // Link to User model
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  stats String? // JSON serialized object
 }
 
 // This model describes the execution of an AgentNode.
@@ -108,10 +148,14 @@ model AgentNodeExecution {
   // sqlite does not support enum
   // enum Status { INCOMPLETE, QUEUED, RUNNING, SUCCESS, FAILED }
   executionStatus String
+  // Final JSON serialized input data for the node execution.
+  executionData   String?
   addedTime       DateTime  @default(now())
   queuedTime      DateTime?
   startedTime     DateTime?
   endedTime       DateTime?
+
+  stats String? // JSON serialized object
 }
 
 // This model describes the output of an AgentNodeExecution.
@@ -127,11 +171,16 @@ model AgentNodeExecutionInputOutput {
   ReferencedByInputExec    AgentNodeExecution? @relation("AgentNodeExecutionInput", fields: [referencedByInputExecId], references: [id])
   referencedByOutputExecId String?
   ReferencedByOutputExec   AgentNodeExecution? @relation("AgentNodeExecutionOutput", fields: [referencedByOutputExecId], references: [id])
+
+  // Input and Output pin names are unique for each AgentNodeExecution.
+  @@unique([referencedByInputExecId, referencedByOutputExecId, name])
 }
 
 // This model describes the recurring execution schedule of an Agent.
 model AgentGraphExecutionSchedule {
   id String @id
+  createdAt DateTime @default(now())
+  updatedAt DateTime? @updatedAt
 
   agentGraphId      String
   agentGraphVersion Int        @default(1)
@@ -143,6 +192,10 @@ model AgentGraphExecutionSchedule {
 
   // default and set the value on each update, lastUpdated field has no time zone.
   lastUpdated DateTime @updatedAt
+
+  // Link to User model
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
 
   @@index([isEnabled])
 }

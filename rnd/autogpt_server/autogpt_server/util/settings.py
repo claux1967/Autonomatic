@@ -41,8 +41,25 @@ class UpdateTrackingModel(BaseModel, Generic[T]):
 class Config(UpdateTrackingModel["Config"], BaseSettings):
     """Config for the server."""
 
-    num_workers: int = Field(
-        default=9, ge=1, le=100, description="Number of workers to use for execution."
+    num_graph_workers: int = Field(
+        default=1,
+        ge=1,
+        le=100,
+        description="Maximum number of workers to use for graph execution.",
+    )
+    num_node_workers: int = Field(
+        default=1,
+        ge=1,
+        le=100,
+        description="Maximum number of workers to use for node execution within a single graph.",
+    )
+    pyro_host: str = Field(
+        default="localhost",
+        description="The default hostname of the Pyro server.",
+    )
+    enable_auth: str = Field(
+        default="false",
+        description="If authentication is enabled or not",
     )
     # Add more configuration fields as needed
 
@@ -52,8 +69,22 @@ class Config(UpdateTrackingModel["Config"], BaseSettings):
             get_config_path() / "config.json",
         ],
         env_file=".env",
-        env_file_encoding="utf-8",
         extra="allow",
+    )
+
+    execution_manager_port: int = Field(
+        default=8002,
+        description="The port for execution manager daemon to run on",
+    )
+
+    execution_scheduler_port: int = Field(
+        default=8003,
+        description="The port for execution scheduler daemon to run on",
+    )
+
+    agent_server_port: int = Field(
+        default=8004,
+        description="The port for agent server daemon to run on",
     )
 
     @classmethod
@@ -65,11 +96,34 @@ class Config(UpdateTrackingModel["Config"], BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> Tuple[PydanticBaseSettingsSource, ...]:
-        return (JsonConfigSettingsSource(settings_cls),)
+        return (
+            env_settings,
+            file_secret_settings,
+            dotenv_settings,
+            JsonConfigSettingsSource(settings_cls),
+            init_settings,
+        )
 
 
 class Secrets(UpdateTrackingModel["Secrets"], BaseSettings):
     """Secrets for the server."""
+
+    supabase_url: str = Field(default="", description="Supabase URL")
+    supabase_key: str = Field(default="", description="Supabase key")
+
+    # OAuth server credentials for integrations
+    github_client_id: str = Field(default="", description="GitHub OAuth client ID")
+    github_client_secret: str = Field(
+        default="", description="GitHub OAuth client secret"
+    )
+    google_client_id: str = Field(default="", description="Google OAuth client ID")
+    google_client_secret: str = Field(
+        default="", description="Google OAuth client secret"
+    )
+    notion_client_id: str = Field(default="", description="Notion OAuth client ID")
+    notion_client_secret: str = Field(
+        default="", description="Notion OAuth client secret"
+    )
 
     openai_api_key: str = Field(default="", description="OpenAI API key")
     anthropic_api_key: str = Field(default="", description="Anthropic API key")
@@ -86,6 +140,16 @@ class Secrets(UpdateTrackingModel["Secrets"], BaseSettings):
 
     medium_api_key: str = Field(default="", description="Medium API key")
     medium_author_id: str = Field(default="", description="Medium author ID")
+    did_api_key: str = Field(default="", description="D-ID API Key")
+
+    discord_bot_token: str = Field(default="", description="Discord bot token")
+
+    smtp_server: str = Field(default="", description="SMTP server IP")
+    smtp_port: str = Field(default="", description="SMTP server port")
+    smtp_username: str = Field(default="", description="SMTP username")
+    smtp_password: str = Field(default="", description="SMTP password")
+
+    sentry_dsn: str = Field(default="", description="Sentry DSN")
 
     # Add more secret fields as needed
 

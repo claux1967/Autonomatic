@@ -1,527 +1,607 @@
 "use client";
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import ReactFlow, {
-  addEdge,
-  applyNodeChanges,
-  applyEdgeChanges,
+import React, {
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  MouseEvent,
+  createContext,
+} from "react";
+import {
+  ReactFlow,
+  ReactFlowProvider,
+  Controls,
+  Background,
   Node,
-  Edge,
-  OnNodesChange,
-  OnEdgesChange,
   OnConnect,
-  NodeTypes,
   Connection,
-  EdgeTypes,
   MarkerType,
-} from 'reactflow';
-import 'reactflow/dist/style.css';
-import CustomNode from './CustomNode';
-import './flow.css';
-import AutoGPTServerAPI, { Block, Graph, ObjectSchema } from '@/lib/autogpt-server-api';
-import { Button } from './ui/button';
-import { Input } from './ui/input';
-import { ChevronRight, ChevronLeft } from "lucide-react";
-import { deepEquals, getTypeColor } from '@/lib/utils';
-import { beautifyString } from '@/lib/utils';
-import { CustomEdge, CustomEdgeData } from './CustomEdge';
-import ConnectionLine from './ConnectionLine';
+  NodeChange,
+  EdgeChange,
+  useReactFlow,
+  applyEdgeChanges,
+  applyNodeChanges,
+  useViewport,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import { CustomNode } from "./CustomNode";
+import "./flow.css";
+import { Link } from "@/lib/autogpt-server-api";
+import { getTypeColor } from "@/lib/utils";
+import { history } from "./history";
+import { CustomEdge } from "./CustomEdge";
+import ConnectionLine from "./ConnectionLine";
+import { Control, ControlPanel } from "@/components/edit/control/ControlPanel";
+import { SaveControl } from "@/components/edit/control/SaveControl";
+import { BlocksControl } from "@/components/edit/control/BlocksControl";
+import {
+  IconPlay,
+  IconRedo2,
+  IconSquare,
+  IconUndo2,
+} from "@/components/ui/icons";
+import { startTutorial } from "./tutorial";
+import useAgentGraph from "@/hooks/useAgentGraph";
+import { v4 as uuidv4 } from "uuid";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 
+// This is for the history, this is the minimum distance a block must move before it is logged
+// It helps to prevent spamming the history with small movements especially when pressing on a input in a block
+const MINIMUM_MOVE_BEFORE_LOG = 50;
 
-type CustomNodeData = {
-  blockType: string;
-  title: string;
-  inputSchema: ObjectSchema;
-  outputSchema: ObjectSchema;
-  hardcodedValues: { [key: string]: any };
-  setHardcodedValues: (values: { [key: string]: any }) => void;
-  connections: Array<{ source: string; sourceHandle: string; target: string; targetHandle: string }>;
-  isOutputOpen: boolean;
-  status?: string;
-  output_data?: any;
-  block_id: string;
-  backend_id?: string;
+type FlowContextType = {
+  visualizeBeads: "no" | "static" | "animate";
+  setIsAnyModalOpen: (isOpen: boolean) => void;
+  getNextNodeId: () => string;
 };
 
-const Sidebar: React.FC<{ isOpen: boolean, availableNodes: Block[], addNode: (id: string, name: string) => void }> =
-  ({ isOpen, availableNodes, addNode }) => {
-    const [searchQuery, setSearchQuery] = useState('');
-
-    if (!isOpen) return null;
-
-    const filteredNodes = availableNodes.filter(node =>
-      node.name.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-
-    return (
-      <div className={`sidebar dark-theme ${isOpen ? 'open' : ''}`}>
-        <h3>Nodes</h3>
-        <Input
-          type="text"
-          placeholder="Search nodes..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-        />
-        {filteredNodes.map((node) => (
-          <div key={node.id} className="sidebarNodeRowStyle dark-theme">
-            <span>{beautifyString(node.name).replace(/Block$/, '')}</span>
-            <Button onClick={() => addNode(node.id, node.name)}>Add</Button>
-          </div>
-        ))}
-      </div>
-    );
-  };
+export const FlowContext = createContext<FlowContextType | null>(null);
 
 const FlowEditor: React.FC<{
   flowID?: string;
   template?: boolean;
   className?: string;
 }> = ({ flowID, template, className }) => {
-  const [nodes, setNodes] = useState<Node<CustomNodeData>[]>([]);
-  const [edges, setEdges] = useState<Edge<CustomEdgeData>[]>([]);
+  const { addNodes, addEdges, getNode, deleteElements, updateNode } =
+    useReactFlow<CustomNode, CustomEdge>();
   const [nodeId, setNodeId] = useState<number>(1);
-  const [availableNodes, setAvailableNodes] = useState<Block[]>([]);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [savedAgent, setSavedAgent] = useState<Graph | null>(null);
-  const [agentDescription, setAgentDescription] = useState<string>('');
-  const [agentName, setAgentName] = useState<string>('');
+  const [copiedNodes, setCopiedNodes] = useState<CustomNode[]>([]);
+  const [copiedEdges, setCopiedEdges] = useState<CustomEdge[]>([]);
+  const [isAnyModalOpen, setIsAnyModalOpen] = useState(false);
+  const [visualizeBeads, setVisualizeBeads] = useState<
+    "no" | "static" | "animate"
+  >("animate");
+  const {
+    agentName,
+    setAgentName,
+    agentDescription,
+    setAgentDescription,
+    savedAgent,
+    availableNodes,
+    getOutputType,
+    requestSave,
+    requestSaveAndRun,
+    requestStopRun,
+    isRunning,
+    nodes,
+    setNodes,
+    edges,
+    setEdges,
+  } = useAgentGraph(flowID, template, visualizeBeads !== "no");
 
-  const apiUrl = process.env.AGPT_SERVER_URL!;
-  const api = useMemo(() => new AutoGPTServerAPI(apiUrl), [apiUrl]);
+  const router = useRouter();
+  const pathname = usePathname();
+  const initialPositionRef = useRef<{
+    [key: string]: { x: number; y: number };
+  }>({});
+  const isDragging = useRef(false);
+
+  // State to control if tutorial has started
+  const [tutorialStarted, setTutorialStarted] = useState(false);
+  // State to control if blocks menu should be pinned open
+  const [pinBlocksPopover, setPinBlocksPopover] = useState(false);
 
   useEffect(() => {
-    api.connectWebSocket()
-      .then(() => {
-        console.log('WebSocket connected');
-        api.onWebSocketMessage('execution_event', (data) => {
-          updateNodesWithExecutionData([data]);
-        });
-      })
-      .catch((error) => {
-        console.error('Failed to connect WebSocket:', error);
-      });
+    const params = new URLSearchParams(window.location.search);
+
+    // If resetting tutorial
+    if (params.get("resetTutorial") === "true") {
+      localStorage.removeItem("shepherd-tour"); // Clear tutorial flag
+      router.push(pathname);
+    } else {
+      // Otherwise, start tutorial if conditions are met
+      const shouldStartTutorial = !localStorage.getItem("shepherd-tour");
+      if (
+        shouldStartTutorial &&
+        availableNodes.length > 0 &&
+        !tutorialStarted
+      ) {
+        startTutorial(setPinBlocksPopover);
+        setTutorialStarted(true);
+        localStorage.setItem("shepherd-tour", "yes");
+      }
+    }
+  }, [availableNodes, tutorialStarted, router, pathname]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
+      const isUndo =
+        (isMac ? event.metaKey : event.ctrlKey) && event.key === "z";
+      const isRedo =
+        (isMac ? event.metaKey : event.ctrlKey) &&
+        (event.key === "y" || (event.shiftKey && event.key === "Z"));
+
+      if (isUndo) {
+        event.preventDefault();
+        handleUndo();
+      }
+
+      if (isRedo) {
+        event.preventDefault();
+        handleRedo();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
 
     return () => {
-      api.disconnectWebSocket();
+      window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [api]);
-
-  useEffect(() => {
-    api.getBlocks()
-      .then(blocks => setAvailableNodes(blocks))
-      .catch();
   }, []);
 
-  // Load existing graph
-  useEffect(() => {
-    if (!flowID || availableNodes.length == 0) return;
+  const onNodeDragStart = (_: MouseEvent, node: Node) => {
+    initialPositionRef.current[node.id] = { ...node.position };
+    isDragging.current = true;
+  };
 
-    (template ? api.getTemplate(flowID) : api.getGraph(flowID))
-      .then(graph => loadGraph(graph));
-  }, [flowID, template, availableNodes]);
+  const onNodeDragEnd = (_: MouseEvent, node: Node | null) => {
+    if (!node) return;
 
-  const nodeTypes: NodeTypes = useMemo(() => ({ custom: CustomNode }), []);
-  const edgeTypes: EdgeTypes = useMemo(() => ({ custom: CustomEdge }), []);
+    isDragging.current = false;
+    const oldPosition = initialPositionRef.current[node.id];
+    const newPosition = node.position;
 
-  const onNodesChange: OnNodesChange = useCallback(
-    (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
-    []
-  );
+    // Calculate the movement distance
+    if (!oldPosition || !newPosition) return;
 
-  const onEdgesChange: OnEdgesChange = useCallback(
-    (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),
-    []
-  );
-
-  const getOutputType = (id: string, handleId: string) => {
-    const node = nodes.find((node) => node.id === id);
-    if (!node) return 'unknown';
-
-    const outputSchema = node.data.outputSchema;
-    if (!outputSchema) return 'unknown';
-
-    const outputType = outputSchema.properties[handleId].type;
-    return outputType;
-  }
-
-  const getNodePos = (id: string) => {
-    const node = nodes.find((node) => node.id === id);
-    if (!node) return 0;
-
-    return node.position;
-  }
-
-  const onConnect: OnConnect = (connection: Connection) => {
-    const edgeColor = getTypeColor(getOutputType(connection.source!, connection.sourceHandle!));
-    const sourcePos = getNodePos(connection.source!)
-    console.log('sourcePos', sourcePos);
-    setEdges((eds) => addEdge({
-      type: 'custom',
-      markerEnd: { type: MarkerType.ArrowClosed, strokeWidth: 2, color: edgeColor },
-      data: { edgeColor, sourcePos },
-      ...connection
-    }, eds));
-    setNodes((nds) =>
-      nds.map((node) => {
-        if (node.id === connection.target || node.id === connection.source) {
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              connections: [
-                ...node.data.connections,
-                {
-                  source: connection.source,
-                  sourceHandle: connection.sourceHandle,
-                  target: connection.target,
-                  targetHandle: connection.targetHandle,
-                } as { source: string; sourceHandle: string; target: string; targetHandle: string },
-              ],
-            },
-          };
-        }
-        return node;
-      })
+    const distanceMoved = Math.sqrt(
+      Math.pow(newPosition.x - oldPosition.x, 2) +
+        Math.pow(newPosition.y - oldPosition.y, 2),
     );
-  }
 
-  const onEdgesDelete = useCallback(
-    (edgesToDelete: Edge<CustomEdgeData>[]) => {
-      setNodes((nds) =>
-        nds.map((node) => ({
-          ...node,
-          data: {
-            ...node.data,
-            connections: node.data.connections.filter(
-              (conn: any) =>
-                !edgesToDelete.some(
-                  (edge) =>
-                    edge.source === conn.source &&
-                    edge.target === conn.target &&
-                    edge.sourceHandle === conn.sourceHandle &&
-                    edge.targetHandle === conn.targetHandle
-                )
-            ),
-          },
-        }))
-      );
-    },
-    [setNodes]
-  );
-
-  const addNode = (blockId: string, nodeType: string) => {
-    const nodeSchema = availableNodes.find(node => node.id === blockId);
-    if (!nodeSchema) {
-      console.error(`Schema not found for block ID: ${blockId}`);
-      return;
+    if (distanceMoved > MINIMUM_MOVE_BEFORE_LOG) {
+      // Minimum movement threshold
+      history.push({
+        type: "UPDATE_NODE_POSITION",
+        payload: { nodeId: node.id, oldPosition, newPosition },
+        undo: () => updateNode(node.id, { position: oldPosition }),
+        redo: () => updateNode(node.id, { position: newPosition }),
+      });
     }
-
-    const newNode: Node<CustomNodeData> = {
-      id: nodeId.toString(),
-      type: 'custom',
-      position: { x: Math.random() * 400, y: Math.random() * 400 },
-      data: {
-        blockType: nodeType,
-        title: `${nodeType} ${nodeId}`,
-        inputSchema: nodeSchema.inputSchema,
-        outputSchema: nodeSchema.outputSchema,
-        hardcodedValues: {},
-        setHardcodedValues: (values: { [key: string]: any }) => {
-          setNodes((nds) => nds.map((node) =>
-            node.id === newNode.id
-              ? { ...node, data: { ...node.data, hardcodedValues: values } }
-              : node
-          ));
-        },
-        connections: [],
-        isOutputOpen: false,
-        block_id: blockId,
-      },
-    };
-
-    setNodes((nds) => [...nds, newNode]);
-    setNodeId((prevId) => prevId + 1);
+    delete initialPositionRef.current[node.id];
   };
 
-  function loadGraph(graph: Graph) {
-    setSavedAgent(graph);
-    setAgentName(graph.name);
-    setAgentDescription(graph.description);
-
-    setNodes(graph.nodes.map(node => {
-      const block = availableNodes.find(block => block.id === node.block_id)!;
-      const newNode = {
-        id: node.id,
-        type: 'custom',
-        position: { x: node.metadata.position.x, y: node.metadata.position.y },
-        data: {
-          block_id: block.id,
-          blockType: block.name,
-          title: `${block.name} ${node.id}`,
-          inputSchema: block.inputSchema,
-          outputSchema: block.outputSchema,
-          hardcodedValues: node.input_default,
-          setHardcodedValues: (values: { [key: string]: any; }) => {
-            setNodes((nds) => nds.map((node) => node.id === newNode.id
-              ? { ...node, data: { ...node.data, hardcodedValues: values } }
-              : node
-            ));
-          },
-          connections: [],
-          isOutputOpen: false,
-        },
-      };
-      return newNode;
-    }));
-
-    setEdges(graph.links.map(link => ({
-      id: `${link.source_id}_${link.source_name}_${link.sink_id}_${link.sink_name}`,
-      type: 'custom',
-      data: {
-        edgeColor: getTypeColor(getOutputType(link.source_id, link.source_name!)),
-        sourcePos: getNodePos(link.source_id)
-      },
-      markerEnd: { type: MarkerType.ArrowClosed, strokeWidth: 2, color: getTypeColor(getOutputType(link.source_id, link.source_name!)) },
-      source: link.source_id,
-      target: link.sink_id,
-      sourceHandle: link.source_name || undefined,
-      targetHandle: link.sink_name || undefined
-    }) as Edge<CustomEdgeData>));
-  }
-
-  const prepareNodeInputData = (node: Node<CustomNodeData>, allNodes: Node<CustomNodeData>[], allEdges: Edge<CustomEdgeData>[]) => {
-    console.log("Preparing input data for node:", node.id, node.data.blockType);
-
-    const blockSchema = availableNodes.find(n => n.id === node.data.block_id)?.inputSchema;
-
-    if (!blockSchema) {
-      console.error(`Schema not found for block ID: ${node.data.block_id}`);
-      return {};
-    }
-
-    const getNestedData = (schema: ObjectSchema, values: { [key: string]: any }): { [key: string]: any } => {
-      let inputData: { [key: string]: any } = {};
-
-      if (schema.properties) {
-        Object.keys(schema.properties).forEach((key) => {
-          if (values[key] !== undefined) {
-            if (schema.properties[key].type === 'object') {
-              inputData[key] = getNestedData(schema.properties[key], values[key]);
-            } else {
-              inputData[key] = values[key];
-            }
-          }
-        });
-      }
-
-      if (schema.additionalProperties) {
-        inputData = { ...inputData, ...values };
-      }
-
-      return inputData;
-    };
-
-    let inputData = getNestedData(blockSchema, node.data.hardcodedValues);
-
-    console.log(`Final prepared input for ${node.data.blockType} (${node.id}):`, inputData);
-    return inputData;
-  };
-
-  async function saveAgent (asTemplate: boolean = false) {
-    setNodes((nds) =>
-      nds.map((node) => ({
+  // Function to clear status, output, and close the output info dropdown of all nodes
+  // and reset data beads on edges
+  const clearNodesStatusAndOutput = useCallback(() => {
+    setNodes((nds) => {
+      const newNodes = nds.map((node) => ({
         ...node,
         data: {
           ...node.data,
           status: undefined,
+          isOutputOpen: false,
         },
-      }))
-    );
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    console.log("All nodes before formatting:", nodes);
-    const blockIdToNodeIdMap = {};
+      }));
 
-    const formattedNodes = nodes.map(node => {
-      nodes.forEach(node => {
-        const key = `${node.data.block_id}_${node.position.x}_${node.position.y}`;
-        blockIdToNodeIdMap[key] = node.id;
-      });
-      const inputDefault = prepareNodeInputData(node, nodes, edges);
-      const inputNodes = edges
-        .filter(edge => edge.target === node.id)
-        .map(edge => ({
-          name: edge.targetHandle || '',
-          node_id: edge.source,
-        }));
-
-      const outputNodes = edges
-        .filter(edge => edge.source === node.id)
-        .map(edge => ({
-          name: edge.sourceHandle || '',
-          node_id: edge.target,
-        }));
-
-      return {
-        id: node.id,
-        block_id: node.data.block_id,
-        input_default: inputDefault,
-        input_nodes: inputNodes,
-        output_nodes: outputNodes,
-        metadata: { position: node.position }
-      };
+      return newNodes;
     });
+  }, [setNodes]);
 
-    const links = edges.map(edge => ({
-      source_id: edge.source,
-      sink_id: edge.target,
-      source_name: edge.sourceHandle || '',
-      sink_name: edge.targetHandle || ''
-    }));
+  const onNodesChange = useCallback(
+    (nodeChanges: NodeChange<CustomNode>[]) => {
+      // Persist the changes
+      setNodes((prev) => applyNodeChanges(nodeChanges, prev));
 
-    const payload = {
-      id: savedAgent?.id!,
-      name: agentName || 'Agent Name',
-      description: agentDescription || 'Agent Description',
-      nodes: formattedNodes,
-      links: links  // Ensure this field is included
-    };
+      // Remove all edges that were connected to deleted nodes
+      nodeChanges
+        .filter((change) => change.type === "remove")
+        .forEach((deletedNode) => {
+          const nodeID = deletedNode.id;
+          const deletedNodeData = nodes.find((node) => node.id === nodeID);
 
-    if (savedAgent && deepEquals(payload, savedAgent)) {
-      console.debug("No need to save: Graph is the same as version on server");
-      return;
+          if (deletedNodeData) {
+            history.push({
+              type: "DELETE_NODE",
+              payload: { node: deletedNodeData },
+              undo: () => addNodes(deletedNodeData),
+              redo: () => deleteElements({ nodes: [{ id: nodeID }] }),
+            });
+          }
+
+          const connectedEdges = edges.filter((edge) =>
+            [edge.source, edge.target].includes(nodeID),
+          );
+          deleteElements({
+            edges: connectedEdges.map((edge) => ({ id: edge.id })),
+          });
+        });
+    },
+    [deleteElements, setNodes, nodes, edges, addNodes],
+  );
+
+  const formatEdgeID = useCallback((conn: Link | Connection): string => {
+    if ("sink_id" in conn) {
+      return `${conn.source_id}_${conn.source_name}_${conn.sink_id}_${conn.sink_name}`;
     } else {
-      console.debug("Saving new Graph version; old vs new:", savedAgent, payload);
+      return `${conn.source}_${conn.sourceHandle}_${conn.target}_${conn.targetHandle}`;
     }
+  }, []);
 
-    const newSavedAgent = savedAgent
-      ? await (savedAgent.is_template
-        ? api.updateTemplate(savedAgent.id, payload) 
-        : api.updateGraph(savedAgent.id, payload))
-      : await (asTemplate
-        ? api.createTemplate(payload)
-        : api.createGraph(payload));
-    console.debug('Response from the API:', newSavedAgent);
-    setSavedAgent(newSavedAgent);
+  const onConnect: OnConnect = useCallback(
+    (connection: Connection) => {
+      // Check if this exact connection already exists
+      const existingConnection = edges.find(
+        (edge) =>
+          edge.source === connection.source &&
+          edge.target === connection.target &&
+          edge.sourceHandle === connection.sourceHandle &&
+          edge.targetHandle === connection.targetHandle,
+      );
 
-    // Update the node IDs in the frontend
-    const updatedNodes = newSavedAgent.nodes.map(backendNode => {
-      const key = `${backendNode.block_id}_${backendNode.metadata.position.x}_${backendNode.metadata.position.y}`;
-      const frontendNodeId = blockIdToNodeIdMap[key];
-      const frontendNode = nodes.find(node => node.id === frontendNodeId);
-
-      return frontendNode
-        ? {
-          ...frontendNode,
-          position: backendNode.metadata.position,
-          data: {
-            ...frontendNode.data,
-            backend_id: backendNode.id,
-          },
-        }
-        : null;
-    }).filter(node => node !== null);
-
-    setNodes(updatedNodes);
-
-    return newSavedAgent.id;
-  };
-
-  const runAgent = async () => {
-    try {
-      const newAgentId = await saveAgent();
-      if (!newAgentId) {
-        console.error('Error saving agent; aborting run');
+      if (existingConnection) {
+        console.warn("This exact connection already exists.");
         return;
       }
 
-      api.subscribeToExecution(newAgentId);
-      api.runGraph(newAgentId);
+      const edgeColor = getTypeColor(
+        getOutputType(nodes, connection.source!, connection.sourceHandle!),
+      );
+      const sourceNode = getNode(connection.source!);
+      const newEdge: CustomEdge = {
+        id: formatEdgeID(connection),
+        type: "custom",
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          strokeWidth: 2,
+          color: edgeColor,
+        },
+        data: {
+          edgeColor,
+          sourcePos: sourceNode!.position,
+          isStatic: sourceNode!.data.isOutputStatic,
+        },
+        ...connection,
+        source: connection.source!,
+        target: connection.target!,
+      };
 
-    } catch (error) {
-      console.error('Error running agent:', error);
-    }
-  };
+      addEdges(newEdge);
+      history.push({
+        type: "ADD_EDGE",
+        payload: { edge: newEdge },
+        undo: () => {
+          deleteElements({ edges: [{ id: newEdge.id }] });
+        },
+        redo: () => {
+          addEdges(newEdge);
+        },
+      });
+      clearNodesStatusAndOutput(); // Clear status and output on connection change
+    },
+    [
+      getNode,
+      addEdges,
+      deleteElements,
+      clearNodesStatusAndOutput,
+      nodes,
+      edges,
+      formatEdgeID,
+      getOutputType,
+    ],
+  );
 
+  const onEdgesChange = useCallback(
+    (edgeChanges: EdgeChange<CustomEdge>[]) => {
+      // Persist the changes
+      setEdges((prev) => applyEdgeChanges(edgeChanges, prev));
 
+      // Propagate edge changes to node data
+      const addedEdges = edgeChanges.filter((change) => change.type === "add"),
+        replaceEdges = edgeChanges.filter(
+          (change) => change.type === "replace",
+        ),
+        removedEdges = edgeChanges.filter((change) => change.type === "remove"),
+        selectedEdges = edgeChanges.filter(
+          (change) => change.type === "select",
+        );
 
-  const updateNodesWithExecutionData = (executionData: any[]) => {
-    setNodes((nds) =>
-      nds.map((node) => {
-        const nodeExecution = executionData.find((exec) => exec.node_id === node.data.backend_id);
-        if (nodeExecution) {
-          return {
+      if (addedEdges.length > 0 || removedEdges.length > 0) {
+        setNodes((nds) => {
+          const newNodes = nds.map((node) => ({
             ...node,
             data: {
               ...node.data,
-              status: nodeExecution.status,
-              output_data: nodeExecution.output_data,
-              isOutputOpen: true,
+              connections: [
+                // Remove node connections for deleted edges
+                ...node.data.connections.filter(
+                  (conn) =>
+                    !removedEdges.some(
+                      (removedEdge) => removedEdge.id === conn.edge_id,
+                    ),
+                ),
+                // Add node connections for added edges
+                ...addedEdges.map((addedEdge) => ({
+                  edge_id: addedEdge.item.id,
+                  source: addedEdge.item.source,
+                  target: addedEdge.item.target,
+                  sourceHandle: addedEdge.item.sourceHandle!,
+                  targetHandle: addedEdge.item.targetHandle!,
+                })),
+              ],
             },
-          };
+          }));
+
+          return newNodes;
+        });
+
+        if (removedEdges.length > 0) {
+          clearNodesStatusAndOutput(); // Clear status and output on edge deletion
         }
-        return node;
-      })
-    );
+      }
+
+      if (replaceEdges.length > 0) {
+        // Reset node connections for all edges
+        console.warn(
+          "useReactFlow().setRootEdges was used to overwrite all edges. " +
+            "Use addEdges, deleteElements, or reconnectEdge for incremental changes.",
+          replaceEdges,
+        );
+        setNodes((nds) =>
+          nds.map((node) => ({
+            ...node,
+            data: {
+              ...node.data,
+              connections: [
+                ...replaceEdges.map((replaceEdge) => ({
+                  edge_id: replaceEdge.item.id,
+                  source: replaceEdge.item.source,
+                  target: replaceEdge.item.target,
+                  sourceHandle: replaceEdge.item.sourceHandle!,
+                  targetHandle: replaceEdge.item.targetHandle!,
+                })),
+              ],
+            },
+          })),
+        );
+        clearNodesStatusAndOutput();
+      }
+    },
+    [setNodes, clearNodesStatusAndOutput, setEdges],
+  );
+
+  const getNextNodeId = useCallback(() => {
+    return uuidv4();
+  }, []);
+
+  const { x, y, zoom } = useViewport();
+
+  const addNode = useCallback(
+    (blockId: string, nodeType: string) => {
+      const nodeSchema = availableNodes.find((node) => node.id === blockId);
+      if (!nodeSchema) {
+        console.error(`Schema not found for block ID: ${blockId}`);
+        return;
+      }
+
+      // Calculate the center of the viewport considering zoom
+      const viewportCenter = {
+        x: (window.innerWidth / 2 - x) / zoom,
+        y: (window.innerHeight / 2 - y) / zoom,
+      };
+
+      const newNode: CustomNode = {
+        id: nodeId.toString(),
+        type: "custom",
+        position: viewportCenter, // Set the position to the calculated viewport center
+        data: {
+          blockType: nodeType,
+          title: `${nodeType} ${nodeId}`,
+          description: nodeSchema.description,
+          categories: nodeSchema.categories,
+          inputSchema: nodeSchema.inputSchema,
+          outputSchema: nodeSchema.outputSchema,
+          hardcodedValues: {},
+          connections: [],
+          isOutputOpen: false,
+          block_id: blockId,
+          isOutputStatic: nodeSchema.staticOutput,
+          uiType: nodeSchema.uiType,
+        },
+      };
+
+      addNodes(newNode);
+      setNodeId((prevId) => prevId + 1);
+      clearNodesStatusAndOutput(); // Clear status and output when a new node is added
+
+      history.push({
+        type: "ADD_NODE",
+        payload: { node: newNode.data },
+        undo: () => deleteElements({ nodes: [{ id: newNode.id }] }),
+        redo: () => addNodes(newNode),
+      });
+    },
+    [
+      nodeId,
+      availableNodes,
+      addNodes,
+      deleteElements,
+      clearNodesStatusAndOutput,
+      x,
+      y,
+      zoom,
+    ],
+  );
+
+  const handleUndo = () => {
+    history.undo();
   };
 
-  const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
+  const handleRedo = () => {
+    history.redo();
+  };
+
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      // Prevent copy/paste if any modal is open or if the focus is on an input element
+      const activeElement = document.activeElement;
+      const isInputField =
+        activeElement?.tagName === "INPUT" ||
+        activeElement?.tagName === "TEXTAREA" ||
+        activeElement?.getAttribute("contenteditable") === "true";
+
+      if (isAnyModalOpen || isInputField) return;
+
+      if (event.ctrlKey || event.metaKey) {
+        if (event.key === "c" || event.key === "C") {
+          // Copy selected nodes
+          const selectedNodes = nodes.filter((node) => node.selected);
+          const selectedEdges = edges.filter((edge) => edge.selected);
+          setCopiedNodes(selectedNodes);
+          setCopiedEdges(selectedEdges);
+        }
+        if (event.key === "v" || event.key === "V") {
+          // Paste copied nodes
+          if (copiedNodes.length > 0) {
+            const oldToNewNodeIDMap: Record<string, string> = {};
+            const pastedNodes = copiedNodes.map((node, index) => {
+              const newNodeId = (nodeId + index).toString();
+              oldToNewNodeIDMap[node.id] = newNodeId;
+              return {
+                ...node,
+                id: newNodeId,
+                position: {
+                  x: node.position.x + 20, // Offset pasted nodes
+                  y: node.position.y + 20,
+                },
+                data: {
+                  ...node.data,
+                  status: undefined, // Reset status
+                  executionResults: undefined, // Clear output data
+                },
+              };
+            });
+            setNodes((existingNodes) =>
+              // Deselect copied nodes
+              existingNodes.map((node) => ({ ...node, selected: false })),
+            );
+            addNodes(pastedNodes);
+            setNodeId((prevId) => prevId + copiedNodes.length);
+
+            const pastedEdges = copiedEdges.map((edge) => {
+              const newSourceId = oldToNewNodeIDMap[edge.source] ?? edge.source;
+              const newTargetId = oldToNewNodeIDMap[edge.target] ?? edge.target;
+              return {
+                ...edge,
+                id: `${newSourceId}_${edge.sourceHandle}_${newTargetId}_${edge.targetHandle}_${Date.now()}`,
+                source: newSourceId,
+                target: newTargetId,
+              };
+            });
+            addEdges(pastedEdges);
+          }
+        }
+      }
+    },
+    [
+      isAnyModalOpen,
+      nodes,
+      edges,
+      copiedNodes,
+      setNodes,
+      addNodes,
+      copiedEdges,
+      addEdges,
+      nodeId,
+    ],
+  );
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [handleKeyDown]);
+
+  const onNodesDelete = useCallback(() => {
+    clearNodesStatusAndOutput();
+  }, [clearNodesStatusAndOutput]);
+
+  const editorControls: Control[] = [
+    {
+      label: "Undo",
+      icon: <IconUndo2 />,
+      onClick: handleUndo,
+    },
+    {
+      label: "Redo",
+      icon: <IconRedo2 />,
+      onClick: handleRedo,
+    },
+    {
+      label: !isRunning ? "Run" : "Stop",
+      icon: !isRunning ? <IconPlay /> : <IconSquare />,
+      onClick: !isRunning ? requestSaveAndRun : requestStopRun,
+    },
+  ];
 
   return (
-    <div className={className}>
-      <Button
-        variant="outline"
-        size="icon"
-        onClick={toggleSidebar}
-        style={{
-          position: 'fixed',
-          left: isSidebarOpen ? '350px' : '10px',
-          zIndex: 10000,
-          backgroundColor: 'black',
-          color: 'white',
-        }}
-      >
-        {isSidebarOpen ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-      </Button>
-      <Sidebar isOpen={isSidebarOpen} availableNodes={availableNodes} addNode={addNode} />
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        connectionLineComponent={ConnectionLine}
-        onEdgesDelete={onEdgesDelete}
-        deleteKeyCode={["Backspace", "Delete"]}
-      >
-        <div style={{ position: 'absolute', right: 10, zIndex: 4 }}>
-          <Input
-            type="text"
-            placeholder="Agent Name"
-            value={agentName}
-            onChange={(e) => setAgentName(e.target.value)}
-          />
-          <Input
-            type="text"
-            placeholder="Agent Description"
-            value={agentDescription}
-            onChange={(e) => setAgentDescription(e.target.value)}
-          />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>  {/* Added gap for spacing */}
-            <Button onClick={() => saveAgent(savedAgent?.is_template)}>
-              Save {savedAgent?.is_template ? "Template" : "Agent"}
-            </Button>
-            {!savedAgent?.is_template &&
-              <Button onClick={runAgent}>Save & Run Agent</Button>
-            }
-            {!savedAgent &&
-              <Button onClick={() => saveAgent(true)}>Save as Template</Button>
-            }
-          </div>
-        </div>
-      </ReactFlow>
-    </div>
+    <FlowContext.Provider
+      value={{ visualizeBeads, setIsAnyModalOpen, getNextNodeId }}
+    >
+      <div className={className}>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={{ custom: CustomNode }}
+          edgeTypes={{ custom: CustomEdge }}
+          connectionLineComponent={ConnectionLine}
+          onConnect={onConnect}
+          onNodesChange={onNodesChange}
+          onNodesDelete={onNodesDelete}
+          onEdgesChange={onEdgesChange}
+          onNodeDragStop={onNodeDragEnd}
+          onNodeDragStart={onNodeDragStart}
+          deleteKeyCode={["Backspace", "Delete"]}
+          minZoom={0.2}
+          maxZoom={2}
+        >
+          <Controls />
+          <Background />
+          <ControlPanel className="absolute z-10" controls={editorControls}>
+            <BlocksControl
+              pinBlocksPopover={pinBlocksPopover} // Pass the state to BlocksControl
+              blocks={availableNodes}
+              addBlock={addNode}
+            />
+            <SaveControl
+              agentMeta={savedAgent}
+              onSave={(isTemplate) => requestSave(isTemplate ?? false)}
+              onDescriptionChange={setAgentDescription}
+              onNameChange={setAgentName}
+            />
+          </ControlPanel>
+        </ReactFlow>
+      </div>
+    </FlowContext.Provider>
   );
 };
 
-export default FlowEditor;
+const WrappedFlowEditor: typeof FlowEditor = (props) => (
+  <ReactFlowProvider>
+    <FlowEditor {...props} />
+  </ReactFlowProvider>
+);
+
+export default WrappedFlowEditor;

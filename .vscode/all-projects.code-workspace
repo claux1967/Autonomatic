@@ -29,11 +29,25 @@
       "path": "../rnd/autogpt_builder"
     },
     {
+      "name": "market",
+      "path": "../rnd/market"
+    },
+    {
+      "name": "lib",
+      "path": "../rnd/autogpt_libs"
+    },
+    {
+      "name": "infra",
+      "path": "../rnd/infra"
+    },
+    {
       "name": "[root]",
       "path": ".."
     }
   ],
-  "settings": {},
+  "settings": {
+    "python.analysis.typeCheckingMode": "basic"
+  },
   "extensions": {
     "recommendations": [
       "charliermarsh.ruff",

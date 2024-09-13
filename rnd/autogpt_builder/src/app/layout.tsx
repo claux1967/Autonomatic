@@ -1,18 +1,14 @@
-import React from 'react';
+import React from "react";
 import type { Metadata } from "next";
-import { ThemeProvider as NextThemeProvider } from "next-themes";
-import { type ThemeProviderProps } from "next-themes/dist/types";
 import { Inter } from "next/font/google";
-import Link from "next/link";
-import { CubeIcon, Pencil1Icon, ReaderIcon, TimerIcon } from "@radix-ui/react-icons";
+import { Providers } from "@/app/providers";
+import { NavBar } from "@/components/NavBar";
+import { cn } from "@/lib/utils";
 
 import "./globals.css";
-
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Button, buttonVariants } from "@/components/ui/button";
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger
-} from "@/components/ui/dropdown-menu";
+import TallyPopupSimple from "@/components/TallyPopup";
+import { GoogleAnalytics } from "@next/third-parties/google";
+import { Toaster } from "@/components/ui/toaster";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -21,39 +17,6 @@ export const metadata: Metadata = {
   description: "Your one stop shop to creating AI Agents",
 };
 
-function ThemeProvider({ children, ...props }: ThemeProviderProps) {
-  return <NextThemeProvider {...props}>{children}</NextThemeProvider>
-}
-
-const NavBar = () => (
-  <nav className="bg-white dark:bg-slate-800 p-4 flex justify-between items-center shadow">
-    <div className="flex space-x-4">
-      <Link href="/monitor" className={buttonVariants({ variant: "ghost" })}>
-        <TimerIcon className="mr-1" /> Monitor
-      </Link>
-      <Link href="/build" className={buttonVariants({ variant: "ghost" })}>
-        <Pencil1Icon className="mr-1" /> Build
-      </Link>
-    </div>
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className="h-8 w-8 rounded-full">
-          <Avatar>
-            <AvatarImage src="https://github.com/shadcn.png" alt="@shadcn" />
-            <AvatarFallback>CN</AvatarFallback>
-          </Avatar>
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem>Profile</DropdownMenuItem>
-        <DropdownMenuItem>Settings</DropdownMenuItem>
-        <DropdownMenuItem>Switch Workspace</DropdownMenuItem>
-        <DropdownMenuItem>Log out</DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  </nav>
-);
-
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -61,20 +24,26 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={inter.className}>
-        <ThemeProvider
+      <body className={cn("antialiased transition-colors", inter.className)}>
+        <Providers
           attribute="class"
           defaultTheme="light"
+          // Feel free to remove this line if you want to use the system theme by default
+          // enableSystem
           disableTransitionOnChange
         >
-          <div className="min-h-screen bg-gray-200 text-gray-900">
+          <div className="flex min-h-screen flex-col">
             <NavBar />
-            <main className="mx-auto p-4">
-              {children}
-            </main>
+            <main className="flex-1 overflow-hidden p-4">{children}</main>
+            <TallyPopupSimple />
           </div>
-        </ThemeProvider>
+          <Toaster />
+        </Providers>
       </body>
+
+      <GoogleAnalytics
+        gaId={process.env.GA_MEASUREMENT_ID || "G-FH2XK2W4GN"} // This is the measurement Id for the Google Analytics dev project
+      />
     </html>
   );
 }

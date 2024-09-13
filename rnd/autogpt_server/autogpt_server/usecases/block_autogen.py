@@ -1,11 +1,17 @@
 from pathlib import Path
 
-from autogpt_server.blocks.basic import ValueBlock
+from prisma.models import User
+
+from autogpt_server.blocks.basic import StoreValueBlock
 from autogpt_server.blocks.block import BlockInstallationBlock
-from autogpt_server.blocks.http import HttpRequestBlock
-from autogpt_server.blocks.llm import TextLlmCallBlock
-from autogpt_server.blocks.text import TextFormatterBlock, TextParserBlock
+from autogpt_server.blocks.http import SendWebRequestBlock
+from autogpt_server.blocks.llm import AITextGeneratorBlock
+from autogpt_server.blocks.text import (
+    ExtractTextInformationBlock,
+    FillTextTemplateBlock,
+)
 from autogpt_server.data.graph import Graph, Link, Node, create_graph
+from autogpt_server.data.user import get_or_create_user
 from autogpt_server.util.test import SpinTestServer, wait_execution
 
 sample_block_modules = {
@@ -23,57 +29,67 @@ for module, description in sample_block_modules.items():
         sample_block_codes[module] = f"[Example: {description}]\n{code}"
 
 
+async def create_test_user() -> User:
+    test_user_data = {
+        "sub": "ef3b97d7-1161-4eb4-92b2-10c24fb154c1",
+        "email": "testuser@example.com",
+        "name": "Test User",
+    }
+    user = await get_or_create_user(test_user_data)
+    return user
+
+
 def create_test_graph() -> Graph:
     """
-            ValueBlock (input)
+            StoreValueBlock (input)
                  ||
                  v
-        TextFormatterBlock (input query)
+        FillTextTemplateBlock (input query)
                  ||
                  v
-         HttpRequestBlock (browse)
+         SendWebRequestBlock (browse)
                  ||
                  v
-     ------> ValueBlock===============
+     ------> StoreValueBlock===============
     |           |  |                    ||
     |            --                     ||
     |                                   ||
     |                                   ||
     |                                    v
-    |        TextLlmCallBlock  <===== TextFormatterBlock (query)
+    |        AITextGeneratorBlock  <===== FillTextTemplateBlock (query)
     |            ||                      ^
     |            v                      ||
-    |       TextParserBlock             ||
+    |       ExtractTextInformationBlock             ||
     |            ||                     ||
     |            v                      ||
     ------ BlockInstallationBlock  ======
     """
     # ======= Nodes ========= #
-    input_data = Node(block_id=ValueBlock().id)
+    input_data = Node(block_id=StoreValueBlock().id)
     input_query_constant = Node(
-        block_id=ValueBlock().id,
+        block_id=StoreValueBlock().id,
         input_default={"data": None},
     )
     input_text_formatter = Node(
-        block_id=TextFormatterBlock().id,
+        block_id=FillTextTemplateBlock().id,
         input_default={
             "format": "Show me how to make a python code for this query: `{query}`",
         },
     )
     search_http_request = Node(
-        block_id=HttpRequestBlock().id,
+        block_id=SendWebRequestBlock().id,
         input_default={
             "url": "https://osit-v2.bentlybro.com/search",
         },
     )
     search_result_constant = Node(
-        block_id=ValueBlock().id,
+        block_id=StoreValueBlock().id,
         input_default={
             "data": None,
         },
     )
     prompt_text_formatter = Node(
-        block_id=TextFormatterBlock().id,
+        block_id=FillTextTemplateBlock().id,
         input_default={
             "format": """
 Write me a full Block implementation for this query: `{query}`
@@ -84,11 +100,11 @@ Here is the information I get to write a Python code for that:
 Here is your previous attempt:
 {previous_attempt}
 """,
-            "named_texts_#_previous_attempt": "No previous attempt found.",
+            "values_#_previous_attempt": "No previous attempt found.",
         },
     )
     code_gen_llm_call = Node(
-        block_id=TextLlmCallBlock().id,
+        block_id=AITextGeneratorBlock().id,
         input_default={
             "sys_prompt": f"""
 You are a software engineer and you are asked to write the full class implementation.
@@ -116,7 +132,7 @@ Here are a couple of sample of the Block class implementation:
         },
     )
     code_text_parser = Node(
-        block_id=TextParserBlock().id,
+        block_id=ExtractTextInformationBlock().id,
         input_default={
             "pattern": "```python\n(.+?)\n```",
             "group": 1,
@@ -149,7 +165,7 @@ Here are a couple of sample of the Block class implementation:
             source_id=input_data.id,
             sink_id=input_text_formatter.id,
             source_name="output",
-            sink_name="named_texts_#_query",
+            sink_name="values_#_query",
         ),
         Link(
             source_id=input_query_constant.id,
@@ -179,13 +195,13 @@ Here are a couple of sample of the Block class implementation:
             source_id=search_result_constant.id,
             sink_id=prompt_text_formatter.id,
             source_name="output",
-            sink_name="named_texts_#_search_result",
+            sink_name="values_#_search_result",
         ),
         Link(
             source_id=input_query_constant.id,
             sink_id=prompt_text_formatter.id,
             source_name="output",
-            sink_name="named_texts_#_query",
+            sink_name="values_#_query",
         ),
         Link(
             source_id=prompt_text_formatter.id,
@@ -209,7 +225,7 @@ Here are a couple of sample of the Block class implementation:
             source_id=block_installation.id,
             sink_id=prompt_text_formatter.id,
             source_name="error",
-            sink_name="named_texts_#_previous_attempt",
+            sink_name="values_#_previous_attempt",
         ),
         Link(  # Re-trigger search result.
             source_id=block_installation.id,
@@ -237,9 +253,12 @@ Here are a couple of sample of the Block class implementation:
 async def block_autogen_agent():
     async with SpinTestServer() as server:
         test_manager = server.exec_manager
-        test_graph = await create_graph(create_test_graph())
+        test_user = await create_test_user()
+        test_graph = await create_graph(create_test_graph(), user_id=test_user.id)
         input_data = {"input": "Write me a block that writes a string into a file."}
-        response = await server.agent_server.execute_graph(test_graph.id, input_data)
+        response = await server.agent_server.execute_graph(
+            test_graph.id, input_data, test_user.id
+        )
         print(response)
         result = await wait_execution(
             exec_manager=test_manager,
@@ -247,6 +266,7 @@ async def block_autogen_agent():
             graph_exec_id=response["id"],
             num_execs=10,
             timeout=1200,
+            user_id=test_user.id,
         )
         print(result)
 
