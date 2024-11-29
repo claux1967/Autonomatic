@@ -11,7 +11,7 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
-from backend.util.data import get_config_path, get_data_path, get_secrets_path
+from backend.util.data import get_data_path
 
 T = TypeVar("T", bound=BaseSettings)
 
@@ -69,8 +69,16 @@ class Config(UpdateTrackingModel["Config"], BaseSettings):
         default="localhost",
         description="The default hostname of the Pyro server.",
     )
-    enable_auth: str = Field(
-        default="false",
+    pyro_client_comm_timeout: float = Field(
+        default=15,
+        description="The default timeout in seconds, for Pyro client connections.",
+    )
+    pyro_client_comm_retry: int = Field(
+        default=3,
+        description="The default number of retries for Pyro client connections.",
+    )
+    enable_auth: bool = Field(
+        default=True,
         description="If authentication is enabled or not",
     )
     enable_credit: str = Field(
@@ -84,10 +92,6 @@ class Config(UpdateTrackingModel["Config"], BaseSettings):
     # Add more configuration fields as needed
 
     model_config = SettingsConfigDict(
-        json_file=[
-            get_config_path() / "config.default.json",
-            get_config_path() / "config.json",
-        ],
         env_file=".env",
         extra="allow",
     )
@@ -117,6 +121,11 @@ class Config(UpdateTrackingModel["Config"], BaseSettings):
         description="The port for agent server daemon to run on",
     )
 
+    database_api_port: int = Field(
+        default=8005,
+        description="The port for database server API to run on",
+    )
+
     agent_api_host: str = Field(
         default="0.0.0.0",
         description="The host for agent server API to run on",
@@ -128,7 +137,7 @@ class Config(UpdateTrackingModel["Config"], BaseSettings):
     )
 
     frontend_base_url: str = Field(
-        default="",
+        default="http://localhost:3000",
         description="Can be used to explicitly set the base URL for the frontend. "
         "This value is then used to generate redirect URLs for OAuth flows.",
     )
@@ -141,6 +150,16 @@ class Config(UpdateTrackingModel["Config"], BaseSettings):
     behave_as: BehaveAs = Field(
         default=BehaveAs.LOCAL,
         description="What environment to behave as: local or cloud",
+    )
+
+    execution_event_bus_name: str = Field(
+        default="execution_event",
+        description="Name of the event bus",
+    )
+
+    trust_endpoints_for_requests: List[str] = Field(
+        default_factory=list,
+        description="A whitelist of trusted internal endpoints for the backend to make requests to.",
     )
 
     backend_cors_allow_origins: List[str] = Field(default_factory=list)
@@ -198,6 +217,8 @@ class Secrets(UpdateTrackingModel["Secrets"], BaseSettings):
         default="", description="Supabase service role key"
     )
 
+    encryption_key: str = Field(default="", description="Encryption key")
+
     # OAuth server credentials for integrations
     # --8<-- [start:OAuthServerCredentialsExample]
     github_client_id: str = Field(default="", description="GitHub OAuth client ID")
@@ -217,6 +238,7 @@ class Secrets(UpdateTrackingModel["Secrets"], BaseSettings):
     openai_api_key: str = Field(default="", description="OpenAI API key")
     anthropic_api_key: str = Field(default="", description="Anthropic API key")
     groq_api_key: str = Field(default="", description="Groq API key")
+    open_router_api_key: str = Field(default="", description="Open Router API Key")
 
     reddit_client_id: str = Field(default="", description="Reddit client ID")
     reddit_client_secret: str = Field(default="", description="Reddit client secret")
@@ -245,11 +267,12 @@ class Secrets(UpdateTrackingModel["Secrets"], BaseSettings):
     replicate_api_key: str = Field(default="", description="Replicate API Key")
     unreal_speech_api_key: str = Field(default="", description="Unreal Speech API Key")
     ideogram_api_key: str = Field(default="", description="Ideogram API Key")
+    jina_api_key: str = Field(default="", description="Jina API Key")
+    unreal_speech_api_key: str = Field(default="", description="Unreal Speech API Key")
 
     # Add more secret fields as needed
 
     model_config = SettingsConfigDict(
-        secrets_dir=get_secrets_path(),
         env_file=".env",
         env_file_encoding="utf-8",
         extra="allow",
@@ -276,11 +299,3 @@ class Settings(BaseModel):
                 with open(config_path, "w") as f:
                     json.dump(config_to_save, f, indent=2)
             self.config.clear_updates()
-
-        # Save updated secrets to individual files
-        secrets_dir = get_secrets_path()
-        for key in self.secrets.updated_fields:
-            secret_file = os.path.join(secrets_dir, key)
-            with open(secret_file, "w") as f:
-                f.write(str(getattr(self.secrets, key)))
-        self.secrets.clear_updates()
