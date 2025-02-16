@@ -25,12 +25,11 @@ class WsMessage(pydantic.BaseModel):
 
 class ExecutionSubscription(pydantic.BaseModel):
     graph_id: str
+    graph_version: int
 
 
-class SubscriptionDetails(pydantic.BaseModel):
-    event_type: str
-    channel: str
-    graph_id: str
+class ExecuteGraphResponse(pydantic.BaseModel):
+    graph_exec_id: str
 
 
 class CreateGraph(pydantic.BaseModel):
@@ -56,3 +55,7 @@ class SetGraphActiveVersion(pydantic.BaseModel):
 
 class UpdatePermissionsRequest(pydantic.BaseModel):
     permissions: List[APIKeyPermission]
+
+
+class RequestTopUp(pydantic.BaseModel):
+    credit_amount: int
