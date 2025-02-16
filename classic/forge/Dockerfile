@@ -1,5 +1,5 @@
 # Use an official Python runtime as a parent image
-FROM python:3.11-slim-buster as base
+FROM python:3.14.0a2-alpine3.21 as base
 
 # Set work directory in the container
 WORKDIR /app
