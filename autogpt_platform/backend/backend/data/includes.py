@@ -18,6 +18,8 @@ EXECUTION_RESULT_INCLUDE: prisma.types.AgentNodeExecutionInclude = {
     "AgentGraphExecution": True,
 }
 
+MAX_NODE_EXECUTIONS_FETCH = 1000
+
 GRAPH_EXECUTION_INCLUDE: prisma.types.AgentGraphExecutionInclude = {
     "AgentNodeExecutions": {
         "include": {
@@ -25,10 +27,29 @@ GRAPH_EXECUTION_INCLUDE: prisma.types.AgentGraphExecutionInclude = {
             "Output": True,
             "AgentNode": True,
             "AgentGraphExecution": True,
-        }
+        },
+        "order_by": [
+            {"queuedTime": "desc"},
+            # Fallback: Incomplete execs has no queuedTime.
+            {"addedTime": "desc"},
+        ],
+        "take": MAX_NODE_EXECUTIONS_FETCH,  # Avoid loading excessive node executions.
     }
 }
+
 
 INTEGRATION_WEBHOOK_INCLUDE: prisma.types.IntegrationWebhookInclude = {
     "AgentNodes": {"include": AGENT_NODE_INCLUDE}  # type: ignore
 }
+
+
+def library_agent_include(user_id: str) -> prisma.types.LibraryAgentInclude:
+    return {
+        "Agent": {
+            "include": {
+                **AGENT_GRAPH_INCLUDE,
+                "AgentGraphExecution": {"where": {"userId": user_id}},
+            }
+        },
+        "Creator": True,
+    }

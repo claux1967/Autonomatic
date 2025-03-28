@@ -1,7 +1,9 @@
-import { Graph, Block, Node } from "./types";
+import { Connection } from "@xyflow/react";
+import { Graph, Block, Node, BlockUIType, Link } from "./types";
 
 /** Creates a copy of the graph with all secrets removed */
 export function safeCopyGraph(graph: Graph, block_defs: Block[]): Graph {
+  graph = removeAgentInputBlockValues(graph, block_defs);
   return {
     ...graph,
     nodes: graph.nodes.map((node) => {
@@ -17,4 +19,37 @@ export function safeCopyGraph(graph: Graph, block_defs: Block[]): Graph {
       };
     }),
   };
+}
+
+export function removeAgentInputBlockValues(graph: Graph, blocks: Block[]) {
+  const inputBlocks = graph.nodes.filter(
+    (node) =>
+      blocks.find((b) => b.id === node.block_id)?.uiType === BlockUIType.INPUT,
+  );
+
+  const modifiedNodes = graph.nodes.map((node) => {
+    if (inputBlocks.find((inputNode) => inputNode.id === node.id)) {
+      return {
+        ...node,
+        input_default: {
+          ...node.input_default,
+          value: "",
+        },
+      };
+    }
+    return node;
+  });
+
+  return {
+    ...graph,
+    nodes: modifiedNodes,
+  };
+}
+
+export function formatEdgeID(conn: Link | Connection): string {
+  if ("sink_id" in conn) {
+    return `${conn.source_id}_${conn.source_name}_${conn.sink_id}_${conn.sink_name}`;
+  } else {
+    return `${conn.source}_${conn.sourceHandle}_${conn.target}_${conn.targetHandle}`;
+  }
 }
