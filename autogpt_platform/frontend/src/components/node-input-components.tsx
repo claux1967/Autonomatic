@@ -5,7 +5,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { format } from "date-fns";
-import { CalendarIcon, Clock } from "lucide-react";
+import { CalendarIcon } from "lucide-react";
 import { Cross2Icon, Pencil2Icon, PlusIcon } from "@radix-ui/react-icons";
 import { beautifyString, cn } from "@/lib/utils";
 import {
@@ -17,6 +17,7 @@ import {
   BlockIOStringSubSchema,
   BlockIONumberSubSchema,
   BlockIOBooleanSubSchema,
+  BlockIOSimpleTypeSubSchema,
 } from "@/lib/autogpt-server-api/types";
 import React, { FC, useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "./ui/button";
@@ -101,7 +102,7 @@ const NodeObjectInputTree: FC<NodeObjectInputTreeProps> = ({
 
 export default NodeObjectInputTree;
 
-const NodeDateTimeInput: FC<{
+const NodeImageInput: FC<{
   selfKey: string;
   schema: BlockIOStringSubSchema;
   value?: string;
@@ -118,6 +119,96 @@ const NodeDateTimeInput: FC<{
   className,
   displayName,
 }) => {
+  const handleFileChange = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      // Validate file type
+      if (!file.type.startsWith("image/")) {
+        console.error("Please upload an image file");
+        return;
+      }
+
+      // Convert to base64
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const base64String = (e.target?.result as string).split(",")[1];
+        handleInputChange(selfKey, base64String);
+      };
+      reader.readAsDataURL(file);
+    },
+    [selfKey, handleInputChange],
+  );
+
+  return (
+    <div className={cn("flex flex-col gap-2", className)}>
+      <div className="nodrag flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() =>
+              document.getElementById(`${selfKey}-upload`)?.click()
+            }
+            className="w-full"
+          >
+            {value ? "Change Image" : `Upload ${displayName}`}
+          </Button>
+          {value && (
+            <Button
+              variant="ghost"
+              className="text-red-500 hover:text-red-700"
+              onClick={() => handleInputChange(selfKey, "")}
+            >
+              <Cross2Icon className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+
+        <input
+          id={`${selfKey}-upload`}
+          type="file"
+          accept="image/*"
+          onChange={handleFileChange}
+          className="hidden"
+        />
+
+        {value && (
+          <div className="relative mt-2 rounded-md border border-gray-300 p-2 dark:border-gray-600">
+            <img
+              src={`data:image/jpeg;base64,${value}`}
+              alt="Preview"
+              className="max-h-32 w-full rounded-md object-contain"
+            />
+          </div>
+        )}
+      </div>
+      {error && <span className="error-message">{error}</span>}
+    </div>
+  );
+};
+
+const NodeDateTimeInput: FC<{
+  selfKey: string;
+  schema: BlockIOStringSubSchema;
+  value?: string;
+  error?: string;
+  handleInputChange: NodeObjectInputTreeProps["handleInputChange"];
+  className?: string;
+  displayName: string;
+  hideDate?: boolean;
+  hideTime?: boolean;
+}> = ({
+  selfKey,
+  schema,
+  value = "",
+  error,
+  handleInputChange,
+  className,
+  displayName,
+  hideDate = false,
+  hideTime = false,
+}) => {
   const date = value ? new Date(value) : new Date();
   const [timeInput, setTimeInput] = useState(
     value ? format(date, "HH:mm") : "00:00",
@@ -126,16 +217,28 @@ const NodeDateTimeInput: FC<{
   const handleDateSelect = (newDate: Date | undefined) => {
     if (!newDate) return;
 
-    const [hours, minutes] = timeInput.split(":").map(Number);
-    newDate.setHours(hours, minutes);
-    handleInputChange(selfKey, newDate.toISOString());
+    if (hideTime) {
+      // Only pass YYYY-MM-DD if time is hidden
+      handleInputChange(selfKey, format(newDate, "yyyy-MM-dd"));
+    } else {
+      // Otherwise pass full date/time, but still incorporate time
+      const [hours, minutes] = timeInput.split(":").map(Number);
+      newDate.setHours(hours, minutes);
+      handleInputChange(selfKey, newDate.toISOString());
+    }
   };
 
   const handleTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newTime = e.target.value;
     setTimeInput(newTime);
 
-    if (value) {
+    if (!value) return;
+
+    if (hideDate) {
+      // Only pass HH:mm if date is hidden
+      handleInputChange(selfKey, newTime);
+    } else {
+      // Otherwise pass full date/time
       const [hours, minutes] = newTime.split(":").map(Number);
       const newDate = new Date(value);
       newDate.setHours(hours, minutes);
@@ -145,34 +248,131 @@ const NodeDateTimeInput: FC<{
 
   return (
     <div className={cn("flex flex-col gap-2", className)}>
-      <Popover>
-        <PopoverTrigger asChild>
+      {hideDate || (
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              className={cn(
+                "w-full justify-start text-left font-normal",
+                !value && "text-muted-foreground",
+              )}
+            >
+              <CalendarIcon className="mr-2 h-4 w-4" />
+              {value ? format(date, "PPP") : <span>Pick a date</span>}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-0" align="start">
+            <Calendar
+              mode="single"
+              selected={date}
+              onSelect={handleDateSelect}
+              initialFocus
+            />
+          </PopoverContent>
+        </Popover>
+      )}
+      {hideTime || (
+        <LocalValuedInput
+          type="time"
+          value={timeInput}
+          onChange={handleTimeChange}
+          className="w-full"
+        />
+      )}
+      {error && <span className="error-message">{error}</span>}
+    </div>
+  );
+};
+
+const NodeFileInput: FC<{
+  selfKey: string;
+  schema: BlockIOStringSubSchema;
+  value?: string;
+  error?: string;
+  handleInputChange: NodeObjectInputTreeProps["handleInputChange"];
+  className?: string;
+  displayName: string;
+}> = ({
+  selfKey,
+  schema,
+  value = "",
+  error,
+  handleInputChange,
+  className,
+  displayName,
+}) => {
+  const handleFileChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const base64String = e.target?.result as string;
+        handleInputChange(selfKey, base64String);
+      };
+      reader.readAsDataURL(file);
+    },
+    [selfKey, handleInputChange],
+  );
+
+  const getFileLabel = useCallback((value: string) => {
+    if (value.startsWith("data:")) {
+      const matches = value.match(/^data:([^;]+);/);
+      if (matches?.[1]) {
+        const mimeParts = matches[1].split("/");
+        if (mimeParts.length > 1) {
+          return `${mimeParts[1].toUpperCase()} file`;
+        }
+        return `${matches[1]} file`;
+      }
+    } else {
+      const pathParts = value.split(".");
+      if (pathParts.length > 1) {
+        const ext = pathParts.pop();
+        if (ext) return `${ext.toUpperCase()} file`;
+      }
+    }
+    return "File";
+  }, []);
+
+  return (
+    <div className={cn("flex flex-col gap-2", className)}>
+      <div className="nodrag flex flex-col gap-2">
+        <div className="flex items-center gap-2">
           <Button
             variant="outline"
-            className={cn(
-              "w-full justify-start text-left font-normal",
-              !value && "text-muted-foreground",
-            )}
+            onClick={() =>
+              document.getElementById(`${selfKey}-upload`)?.click()
+            }
+            className="w-full"
           >
-            <CalendarIcon className="mr-2 h-4 w-4" />
-            {value ? format(date, "PPP") : <span>Pick a date</span>}
+            {value ? `Change ${displayName}` : `Upload ${displayName}`}
           </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-auto p-0" align="start">
-          <Calendar
-            mode="single"
-            selected={date}
-            onSelect={handleDateSelect}
-            initialFocus
-          />
-        </PopoverContent>
-      </Popover>
-      <LocalValuedInput
-        type="time"
-        value={timeInput}
-        onChange={handleTimeChange}
-        className="w-full"
-      />
+          {value && (
+            <Button
+              variant="ghost"
+              className="text-red-500 hover:text-red-700"
+              onClick={() => handleInputChange(selfKey, "")}
+            >
+              <Cross2Icon className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+        <input
+          id={`${selfKey}-upload`}
+          type="file"
+          accept="*/*"
+          onChange={handleFileChange}
+          className="hidden"
+        />
+        {value && (
+          <div className="break-all rounded-md border border-gray-300 p-2 dark:border-gray-600">
+            <small>{getFileLabel(value)}</small>
+          </div>
+        )}
+      </div>
       {error && <span className="error-message">{error}</span>}
     </div>
   );
@@ -201,7 +401,7 @@ export const NodeGenericInputField: FC<{
   className,
   displayName,
 }) => {
-  className = cn(className, "my-2");
+  className = cn(className);
   displayName ||= propSchema.title || beautifyString(propKey);
 
   if ("allOf" in propSchema) {
@@ -290,12 +490,75 @@ export const NodeGenericInputField: FC<{
   }
 
   if ("anyOf" in propSchema) {
+    // Optional oneOf
+    if (
+      "oneOf" in propSchema.anyOf[0] &&
+      propSchema.anyOf[0].oneOf &&
+      "discriminator" in propSchema.anyOf[0] &&
+      propSchema.anyOf[0].discriminator
+    ) {
+      return (
+        <NodeOneOfDiscriminatorField
+          nodeId={nodeId}
+          propKey={propKey}
+          propSchema={propSchema.anyOf[0]}
+          defaultValue={propSchema.default}
+          currentValue={currentValue}
+          errors={errors}
+          connections={connections}
+          handleInputChange={handleInputChange}
+          handleInputClick={handleInputClick}
+          className={className}
+          displayName={displayName}
+        />
+      );
+    }
+
     // optional items
     const types = propSchema.anyOf.map((s) =>
       "type" in s ? s.type : undefined,
     );
     if (types.includes("string") && types.includes("null")) {
-      // optional string
+      // optional string and datetime
+
+      if (
+        "format" in propSchema.anyOf[0] &&
+        ["date-time", "date", "time"].includes(
+          propSchema.anyOf[0].format as string,
+        )
+      ) {
+        return (
+          <NodeDateTimeInput
+            hideDate={propSchema.anyOf[0].format === "time"}
+            hideTime={propSchema.anyOf[0].format === "date"}
+            selfKey={propKey}
+            schema={propSchema.anyOf[0]}
+            value={currentValue}
+            error={errors[propKey]}
+            className={className}
+            displayName={displayName}
+            handleInputChange={handleInputChange}
+          />
+        );
+      }
+
+      if (
+        "format" in propSchema.anyOf[0] &&
+        propSchema.anyOf[0].format === "file"
+      ) {
+        return (
+          <NodeFileInput
+            selfKey={propKey}
+            schema={propSchema.anyOf[0] as BlockIOStringSubSchema}
+            value={currentValue}
+            error={errors[propKey]}
+            handleInputChange={handleInputChange}
+            className={className}
+            displayName={displayName}
+          />
+        );
+      }
+
       return (
         <NodeStringInput
           selfKey={propKey}
@@ -356,6 +619,42 @@ export const NodeGenericInputField: FC<{
         />
       );
     } else if (types.includes("object") && types.includes("null")) {
+      // rendering optional mutliselect
+      if (
+        Object.values(
+          (propSchema.anyOf[0] as BlockIOObjectSubSchema).properties,
+        ).every(
+          (subSchema) => "type" in subSchema && subSchema.type == "boolean",
+        ) &&
+        Object.keys((propSchema.anyOf[0] as BlockIOObjectSubSchema).properties)
+          .length >= 1
+      ) {
+        const options = Object.keys(
+          (propSchema.anyOf[0] as BlockIOObjectSubSchema).properties,
+        );
+        const selectedKeys = Object.entries(currentValue || {})
+          .filter(([_, v]) => v)
+          .map(([k, _]) => k);
+        return (
+          <NodeMultiSelectInput
+            selfKey={propKey}
+            schema={propSchema.anyOf[0] as BlockIOObjectSubSchema}
+            selection={selectedKeys}
+            error={errors[propKey]}
+            className={className}
+            displayName={displayName}
+            handleInputChange={(key, selection) => {
+              handleInputChange(
+                key,
+                Object.fromEntries(
+                  options.map((option) => [option, selection.includes(option)]),
+                ),
+              );
+            }}
+          />
+        );
+      }
+
       return (
         <NodeKeyValueInput
           nodeId={nodeId}
@@ -391,6 +690,7 @@ export const NodeGenericInputField: FC<{
         propKey={propKey}
         propSchema={propSchema}
         currentValue={currentValue}
+        defaultValue={propSchema.default}
         errors={errors}
         connections={connections}
         handleInputChange={handleInputChange}
@@ -418,9 +718,9 @@ export const NodeGenericInputField: FC<{
 
   switch (propSchema.type) {
     case "string":
-      if ("format" in propSchema && propSchema.format === "date-time") {
+      if ("image_upload" in propSchema && propSchema.image_upload === true) {
         return (
-          <NodeDateTimeInput
+          <NodeImageInput
             selfKey={propKey}
             schema={propSchema}
             value={currentValue}
@@ -428,6 +728,37 @@ export const NodeGenericInputField: FC<{
             className={className}
             displayName={displayName}
             handleInputChange={handleInputChange}
+          />
+        );
+      }
+      if (
+        "format" in propSchema &&
+        ["date-time", "date", "time"].includes(propSchema.format as string)
+      ) {
+        return (
+          <NodeDateTimeInput
+            hideDate={propSchema.format === "time"}
+            hideTime={propSchema.format === "date"}
+            selfKey={propKey}
+            schema={propSchema}
+            value={currentValue}
+            error={errors[propKey]}
+            className={className}
+            displayName={displayName}
+            handleInputChange={handleInputChange}
+          />
+        );
+      }
+      if ("format" in propSchema && propSchema.format === "file") {
+        return (
+          <NodeFileInput
+            selfKey={propKey}
+            schema={propSchema}
+            value={currentValue}
+            error={errors[propKey]}
+            handleInputChange={handleInputChange}
+            className={className}
+            displayName={displayName}
           />
         );
       }
@@ -522,8 +853,9 @@ const NodeOneOfDiscriminatorField: FC<{
   propKey: string;
   propSchema: any;
   currentValue?: any;
+  defaultValue?: any;
   errors: { [key: string]: string | undefined };
-  connections: any;
+  connections: ConnectionData;
   handleInputChange: (key: string, value: any) => void;
   handleInputClick: (key: string) => void;
   className?: string;
@@ -533,15 +865,14 @@ const NodeOneOfDiscriminatorField: FC<{
   propKey,
   propSchema,
   currentValue,
+  defaultValue,
   errors,
   connections,
   handleInputChange,
   handleInputClick,
   className,
-  displayName,
 }) => {
   const discriminator = propSchema.discriminator;
-
   const discriminatorProperty = discriminator.propertyName;
 
   const variantOptions = useMemo(() => {
@@ -554,19 +885,36 @@ const NodeOneOfDiscriminatorField: FC<{
 
         return {
           value: variantDiscValue,
-          schema: variant,
+          schema: variant as BlockIOSubSchema,
         };
       })
       .filter((v: any) => v.value != null);
   }, [discriminatorProperty, propSchema.oneOf]);
 
-  const currentVariant = variantOptions.find(
-    (opt: any) => currentValue?.[discriminatorProperty] === opt.value,
-  );
+  const initialVariant = defaultValue
+    ? variantOptions.find(
+        (opt: any) => defaultValue[discriminatorProperty] === opt.value,
+      )
+    : currentValue
+      ? variantOptions.find(
+          (opt: any) => currentValue[discriminatorProperty] === opt.value,
+        )
+      : null;
 
   const [chosenType, setChosenType] = useState<string>(
-    currentVariant?.value || "",
+    initialVariant?.value || "",
   );
+
+  useEffect(() => {
+    if (initialVariant && !currentValue) {
+      handleInputChange(
+        propKey,
+        defaultValue || {
+          [discriminatorProperty]: initialVariant.value,
+        },
+      );
+    }
+  }, []);
 
   const handleVariantChange = (newType: string) => {
     setChosenType(newType);
@@ -585,8 +933,24 @@ const NodeOneOfDiscriminatorField: FC<{
     (opt: any) => opt.value === chosenType,
   )?.schema;
 
+  function getEntryKey(key: string): string {
+    // use someKey for handle purpose (not childKey)
+    return `${propKey}_#_${key}`;
+  }
+
+  function isConnected(key: string): boolean {
+    return connections.some(
+      (c) => c.targetHandle === getEntryKey(key) && c.target === nodeId,
+    );
+  }
+
   return (
-    <div className={cn("flex flex-col space-y-2", className)}>
+    <div
+      className={cn(
+        "flex min-w-[400px] max-w-[95%] flex-col space-y-4",
+        className,
+      )}
+    >
       <Select value={chosenType || ""} onValueChange={handleVariantChange}>
         <SelectTrigger className="w-full">
           <SelectValue placeholder="Select a type..." />
@@ -607,32 +971,38 @@ const NodeOneOfDiscriminatorField: FC<{
               if (someKey === "discriminator") {
                 return null;
               }
-              const childKey = propKey ? `${propKey}.${someKey}` : someKey;
+              const childKey = propKey ? `${propKey}.${someKey}` : someKey; // for history redo/undo purpose
               return (
                 <div
                   key={childKey}
-                  className="flex w-full flex-row justify-between space-y-2"
+                  className="mb-4 flex w-full flex-col justify-between space-y-2"
                 >
-                  <span className="mr-2 mt-3 dark:text-gray-300">
-                    {(childSchema as BlockIOSubSchema).title ||
-                      beautifyString(someKey)}
-                  </span>
-                  <NodeGenericInputField
-                    nodeId={nodeId}
-                    key={propKey}
-                    propKey={childKey}
-                    propSchema={childSchema as BlockIOSubSchema}
-                    currentValue={
-                      currentValue ? currentValue[someKey] : undefined
-                    }
-                    errors={errors}
-                    connections={connections}
-                    handleInputChange={handleInputChange}
-                    handleInputClick={handleInputClick}
-                    displayName={
-                      chosenVariantSchema.title || beautifyString(someKey)
-                    }
+                  <NodeHandle
+                    keyName={getEntryKey(someKey)}
+                    schema={childSchema as BlockIOSubSchema}
+                    isConnected={isConnected(getEntryKey(someKey))}
+                    isRequired={false}
+                    side="left"
                   />
+
+                  {!isConnected(someKey) && (
+                    <NodeGenericInputField
+                      nodeId={nodeId}
+                      key={propKey}
+                      propKey={childKey}
+                      propSchema={childSchema as BlockIOSubSchema}
+                      currentValue={
+                        currentValue
+                          ? currentValue[someKey]
+                          : defaultValue?.[someKey]
+                      }
+                      errors={errors}
+                      connections={connections}
+                      handleInputChange={handleInputChange}
+                      handleInputClick={handleInputClick}
+                      displayName={beautifyString(someKey)}
+                    />
+                  )}
                 </div>
               );
             },
@@ -653,6 +1023,7 @@ const NodeCredentialsInput: FC<{
   return (
     <div className={cn("flex flex-col", className)}>
       <CredentialsInput
+        selfKey={selfKey}
         onSelectCredentials={(credsMeta) =>
           handleInputChange(selfKey, credsMeta)
         }
@@ -748,10 +1119,8 @@ const NodeKeyValueInput: FC<{
     >
       <div>
         {keyValuePairs.map(({ key, value }, index) => (
-          /*
-          The `index` is used as a DOM key instead of the actual `key`
-          because the `key` can change with each input, causing the input to lose focus.
-          */
+          // The `index` is used as a DOM key instead of the actual `key`
+          // because the `key` can change with each input, causing the input to lose focus.
           <div key={index}>
             <NodeHandle
               keyName={getEntryKey(key)}
@@ -826,6 +1195,13 @@ const NodeKeyValueInput: FC<{
   );
 };
 
+// Checking if schema is type of string
+function isStringSubSchema(
+  schema: BlockIOSimpleTypeSubSchema,
+): schema is BlockIOStringSubSchema {
+  return "type" in schema && schema.type === "string";
+}
+
 const NodeArrayInput: FC<{
   nodeId: string;
   selfKey: string;
@@ -876,18 +1252,19 @@ const NodeArrayInput: FC<{
             (c) => c.targetHandle === entryKey && c.target === nodeId,
           );
         return (
-          <div key={entryKey} className="self-start">
+          <div key={entryKey}>
+            <NodeHandle
+              keyName={entryKey}
+              schema={schema.items!}
+              isConnected={isConnected}
+              isRequired={false}
+              side="left"
+            />
             <div className="mb-2 flex space-x-2">
-              <NodeHandle
-                keyName={entryKey}
-                schema={schema.items!}
-                isConnected={isConnected}
-                isRequired={false}
-                side="left"
-              />
               {!isConnected &&
                 (schema.items ? (
                   <NodeGenericInputField
+                    className="w-full"
                     nodeId={nodeId}
                     propKey={entryKey}
                     propSchema={schema.items}
@@ -1165,15 +1542,10 @@ const NodeBooleanInput: FC<{
   value ||= schema.default ?? false;
   return (
     <div className={className}>
-      <div className="nodrag flex items-center">
-        <Switch
-          defaultChecked={value}
-          onCheckedChange={(v) => handleInputChange(selfKey, v)}
-        />
-        {displayName && (
-          <span className="ml-3 dark:text-gray-300">{displayName}</span>
-        )}
-      </div>
+      <Switch
+        defaultChecked={value}
+        onCheckedChange={(v) => handleInputChange(selfKey, v)}
+      />
       {error && <span className="error-message">{error}</span>}
     </div>
   );

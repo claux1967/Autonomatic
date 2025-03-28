@@ -5,7 +5,7 @@ test.describe("Authentication", () => {
   test("user can login successfully", async ({ page, loginPage, testUser }) => {
     await page.goto("/login");
     await loginPage.login(testUser.email, testUser.password);
-    await test.expect(page).toHaveURL("/store");
+    await test.expect(page).toHaveURL("/marketplace");
     await test
       .expect(page.getByTestId("profile-popout-menu-trigger"))
       .toBeVisible();
@@ -18,8 +18,7 @@ test.describe("Authentication", () => {
   }) => {
     await page.goto("/login");
     await loginPage.login(testUser.email, testUser.password);
-
-    await test.expect(page).toHaveURL("/store");
+    await test.expect(page).toHaveURL("/marketplace");
 
     // Click on the profile menu trigger to open popout
     await page.getByTestId("profile-popout-menu-trigger").click();
@@ -43,7 +42,7 @@ test.describe("Authentication", () => {
   }) => {
     await page.goto("/login");
     await loginPage.login(testUser.email, testUser.password);
-    await test.expect(page).toHaveURL("/store");
+    await test.expect(page).toHaveURL("/marketplace");
     // Click on the profile menu trigger to open popout
     await page.getByTestId("profile-popout-menu-trigger").click();
 
@@ -52,7 +51,7 @@ test.describe("Authentication", () => {
 
     await test.expect(page).toHaveURL("/login");
     await loginPage.login(testUser.email, testUser.password);
-    await test.expect(page).toHaveURL("/store");
+    await test.expect(page).toHaveURL("/marketplace");
     await test
       .expect(page.getByTestId("profile-popout-menu-trigger"))
       .toBeVisible();

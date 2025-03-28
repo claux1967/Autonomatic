@@ -8,6 +8,7 @@ import {
   CarouselItem,
 } from "@/components/ui/carousel";
 import { useRouter } from "next/navigation";
+import { cn } from "@/lib/utils";
 
 export interface Agent {
   slug: string;
@@ -34,19 +35,19 @@ export const AgentsSection: React.FC<AgentsSectionProps> = ({
 }) => {
   const router = useRouter();
 
-  // Take only the first 9 agents
-  const displayedAgents = allAgents.slice(0, 9);
+  // TODO: Update this when we have pagination
+  const displayedAgents = allAgents;
 
   const handleCardClick = (creator: string, slug: string) => {
     router.push(
-      `/store/agent/${encodeURIComponent(creator)}/${encodeURIComponent(slug)}`,
+      `/marketplace/agent/${encodeURIComponent(creator)}/${encodeURIComponent(slug)}`,
     );
   };
 
   return (
     <div className="flex flex-col items-center justify-center py-4 lg:py-8">
       <div className="w-full max-w-[1360px]">
-        <div className="font-poppins decoration-skip-ink-none mb-8 text-left text-[18px] font-[600] leading-7 text-[#282828] underline-offset-[from-font] dark:text-neutral-200">
+        <div className="decoration-skip-ink-none mb-8 text-left font-poppins text-[18px] font-[600] leading-7 text-[#282828] underline-offset-[from-font] dark:text-neutral-200">
           {sectionTitle}
         </div>
         {!displayedAgents || displayedAgents.length === 0 ? (
@@ -64,7 +65,7 @@ export const AgentsSection: React.FC<AgentsSectionProps> = ({
             >
               <CarouselContent>
                 {displayedAgents.map((agent, index) => (
-                  <CarouselItem key={index} className="min-w-64 max-w-68">
+                  <CarouselItem key={index} className="min-w-64 max-w-71">
                     <StoreCard
                       agentName={agent.agent_name}
                       agentImage={agent.agent_image}
