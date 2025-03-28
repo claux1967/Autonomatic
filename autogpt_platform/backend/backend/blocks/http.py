@@ -1,10 +1,15 @@
 import json
+import logging
 from enum import Enum
 from typing import Any
+
+from requests.exceptions import HTTPError, RequestException
 
 from backend.data.block import Block, BlockCategory, BlockOutput, BlockSchema
 from backend.data.model import SchemaField
 from backend.util.request import requests
+
+logger = logging.getLogger(name=__name__)
 
 
 class HttpMethod(Enum):
@@ -43,8 +48,9 @@ class SendWebRequestBlock(Block):
 
     class Output(BlockSchema):
         response: object = SchemaField(description="The response from the server")
-        client_error: object = SchemaField(description="The error on 4xx status codes")
-        server_error: object = SchemaField(description="The error on 5xx status codes")
+        client_error: object = SchemaField(description="Errors on 4xx status codes")
+        server_error: object = SchemaField(description="Errors on 5xx status codes")
+        error: str = SchemaField(description="Errors for all other exceptions")
 
     def __init__(self):
         super().__init__(
@@ -56,23 +62,52 @@ class SendWebRequestBlock(Block):
         )
 
     def run(self, input_data: Input, **kwargs) -> BlockOutput:
-        if isinstance(input_data.body, str):
-            input_data.body = json.loads(input_data.body)
+        body = input_data.body
 
-        response = requests.request(
-            input_data.method.value,
-            input_data.url,
-            headers=input_data.headers,
-            json=input_data.body if input_data.json_format else None,
-            data=input_data.body if not input_data.json_format else None,
-        )
-        result = response.json() if input_data.json_format else response.text
+        if input_data.json_format:
+            if isinstance(body, str):
+                try:
+                    # Try to parse as JSON first
+                    body = json.loads(body)
+                except json.JSONDecodeError:
+                    # If it's not valid JSON and just plain text,
+                    # we should send it as plain text instead
+                    input_data.json_format = False
 
-        if response.status_code // 100 == 2:
+        try:
+            response = requests.request(
+                input_data.method.value,
+                input_data.url,
+                headers=input_data.headers,
+                json=body if input_data.json_format else None,
+                data=body if not input_data.json_format else None,
+            )
+            result = response.json() if input_data.json_format else response.text
             yield "response", result
-        elif response.status_code // 100 == 4:
-            yield "client_error", result
-        elif response.status_code // 100 == 5:
-            yield "server_error", result
-        else:
-            raise ValueError(f"Unexpected status code: {response.status_code}")
+
+        except HTTPError as e:
+            # Handle error responses
+            try:
+                result = e.response.json() if input_data.json_format else str(e)
+            except json.JSONDecodeError:
+                result = str(e)
+
+            if 400 <= e.response.status_code < 500:
+                yield "client_error", result
+            elif 500 <= e.response.status_code < 600:
+                yield "server_error", result
+            else:
+                error_msg = (
+                    "Unexpected status code "
+                    f"{e.response.status_code} '{e.response.reason}'"
+                )
+                logger.warning(error_msg)
+                yield "error", error_msg
+
+        except RequestException as e:
+            # Handle other request-related exceptions
+            yield "error", str(e)
+
+        except Exception as e:
+            # Catch any other unexpected exceptions
+            yield "error", str(e)

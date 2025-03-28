@@ -1,10 +1,11 @@
 import { ElementHandle, Locator, Page } from "@playwright/test";
 import { BasePage } from "./base.page";
 
-interface Block {
+export interface Block {
   id: string;
   name: string;
   description: string;
+  type: string;
 }
 
 export class BuildPage extends BasePage {
@@ -72,10 +73,12 @@ export class BuildPage extends BasePage {
 
             const name = (await nameElement.textContent()) || "";
             const description = (await descriptionElement.textContent()) || "";
+            const type = (await nameElement.getAttribute("data-type")) || "";
 
             return {
               id,
               name: name.trim(),
+              type: type.trim(),
               description: description.trim(),
             };
           } catch (elementError) {
@@ -358,6 +361,7 @@ export class BuildPage extends BasePage {
       id: "31d1064e-7446-4693-a7d4-65e5ca1180d1",
       name: "Add to Dictionary",
       description: "Add to Dictionary",
+      type: "Standard",
     };
   }
 
@@ -375,6 +379,17 @@ export class BuildPage extends BasePage {
       id: "b1ab9b19-67a6-406d-abf5-2dba76d00c79",
       name: "Calculator",
       description: "Calculator",
+      type: "Standard",
+    };
+  }
+
+  async getGithubTriggerBlockDetails(): Promise<Block> {
+    return {
+      id: "6c60ec01-8128-419e-988f-96a063ee2fea",
+      name: "Github Trigger",
+      description:
+        "This block triggers on pull request events and outputs the event type and payload.",
+      type: "Standard",
     };
   }
 
@@ -446,6 +461,10 @@ export class BuildPage extends BasePage {
       },
       { newX, newY },
     );
+  }
+
+  async getBlocksToSkip(): Promise<string[]> {
+    return [(await this.getGithubTriggerBlockDetails()).id];
   }
 
   async waitForRunTutorialButton(): Promise<void> {
