@@ -1,4 +1,4 @@
-FROM python:3.11.10-slim-bookworm AS builder
+FROM python:3.14.0a3-slim-bookworm AS builder
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE 1
@@ -37,7 +37,7 @@ RUN poetry install --no-ansi --no-root
 COPY autogpt_platform/backend/schema.prisma ./
 RUN poetry run prisma generate
 
-FROM python:3.11.10-slim-bookworm AS server_dependencies
+FROM python:3.14.0a3-slim-bookworm AS server_dependencies
 
 WORKDIR /app
 
