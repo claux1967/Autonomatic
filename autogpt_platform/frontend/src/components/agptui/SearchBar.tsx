@@ -36,7 +36,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
     if (searchQuery.trim()) {
       // Encode the search term and navigate to the desired path
       const encodedTerm = encodeURIComponent(searchQuery);
-      router.push(`/store/search?searchTerm=${encodedTerm}`);
+      router.push(`/marketplace/search?searchTerm=${encodedTerm}`);
     }
   };
 
@@ -52,7 +52,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
         value={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}
         placeholder={placeholder}
-        className={`flex-grow border-none bg-transparent ${textColor} font-['Geist'] text-lg font-normal leading-[2.25rem] tracking-tight md:text-xl placeholder:${placeholderColor} focus:outline-none`}
+        className={`flex-grow border-none bg-transparent ${textColor} font-sans text-lg font-normal leading-[2.25rem] tracking-tight md:text-xl placeholder:${placeholderColor} focus:outline-none`}
         data-testid="store-search-input"
       />
     </form>
