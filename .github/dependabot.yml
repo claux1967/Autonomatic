@@ -89,28 +89,6 @@ updates:
         - "minor"
         - "patch"
 
-  # market (Poetry project)
-  - package-ecosystem: "pip"
-    directory: "autogpt_platform/market"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
-    target-branch: "dev"
-    commit-message:
-      prefix: "chore(market/deps)"
-      prefix-development: "chore(market/deps-dev)"
-    groups:
-      production-dependencies:
-        dependency-type: "production"
-        update-types:
-        - "minor"
-        - "patch"
-      development-dependencies:
-        dependency-type: "development"
-        update-types:
-        - "minor"
-        - "patch"
-
 
   # GitHub Actions
   - package-ecosystem: "github-actions"
@@ -150,30 +128,6 @@ updates:
         update-types:
         - "minor"
         - "patch"
-
-
-  # Submodules
-  - package-ecosystem: "gitsubmodule"
-    directory: "autogpt_platform/supabase"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 1
-    target-branch: "dev"
-    commit-message:
-      prefix: "chore(platform/deps)"
-      prefix-development: "chore(platform/deps-dev)"
-    groups:
-      production-dependencies:
-        dependency-type: "production"
-        update-types:
-        - "minor"
-        - "patch"
-      development-dependencies:
-        dependency-type: "development"
-        update-types:
-        - "minor"
-        - "patch"
-
 
   # Docs
   - package-ecosystem: 'pip'

@@ -2,6 +2,7 @@ import inspect
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import (
+    TYPE_CHECKING,
     Any,
     ClassVar,
     Generator,
@@ -18,15 +19,20 @@ import jsonschema
 from prisma.models import AgentBlock
 from pydantic import BaseModel
 
+from backend.data.model import NodeExecutionStats
+from backend.integrations.providers import ProviderName
 from backend.util import json
 from backend.util.settings import Config
 
 from .model import (
-    CREDENTIALS_FIELD_NAME,
     ContributorDetails,
     Credentials,
     CredentialsMetaInput,
+    is_credentials_field_name,
 )
+
+if TYPE_CHECKING:
+    from .graph import Link
 
 app_config = Config()
 
@@ -44,6 +50,7 @@ class BlockType(Enum):
     WEBHOOK = "Webhook"
     WEBHOOK_MANUAL = "Webhook (manual)"
     AGENT = "Agent"
+    AI = "AI"
 
 
 class BlockCategory(Enum):
@@ -61,6 +68,12 @@ class BlockCategory(Enum):
     HARDWARE = "Block that interacts with hardware."
     AGENT = "Block that interacts with other agents."
     CRM = "Block that interacts with CRM services."
+    SAFETY = (
+        "Block that provides AI safety mechanisms such as detecting harmful content"
+    )
+    PRODUCTIVITY = "Block that helps with productivity"
+    ISSUE_TRACKING = "Block that helps with issue tracking"
+    MULTIMEDIA = "Block that interacts with multimedia content"
 
     def dict(self) -> dict[str, str]:
         return {"category": self.name, "description": self.value}
@@ -97,16 +110,15 @@ class BlockSchema(BaseModel):
 
         cls.cached_jsonschema = cast(dict[str, Any], ref_to_dict(model))
 
-        # Set default properties values
-        for field in cls.cached_jsonschema.get("properties", {}).values():
-            if isinstance(field, dict) and "advanced" not in field:
-                field["advanced"] = True
-
         return cls.cached_jsonschema
 
     @classmethod
     def validate_data(cls, data: BlockInput) -> str | None:
         return json.validate_with_jsonschema(schema=cls.jsonschema(), data=data)
+
+    @classmethod
+    def get_mismatch_error(cls, data: BlockInput) -> str | None:
+        return cls.validate_data(data)
 
     @classmethod
     def validate_field(cls, field_name: str, data: BlockInput) -> str | None:
@@ -143,17 +155,38 @@ class BlockSchema(BaseModel):
     @classmethod
     def __pydantic_init_subclass__(cls, **kwargs):
         """Validates the schema definition. Rules:
-        - Only one `CredentialsMetaInput` field may be present.
-          - This field MUST be called `credentials`.
-        - A field that is called `credentials` MUST be a `CredentialsMetaInput`.
+        - Fields with annotation `CredentialsMetaInput` MUST be
+          named `credentials` or `*_credentials`
+        - Fields named `credentials` or `*_credentials` MUST be
+          of type `CredentialsMetaInput`
         """
         super().__pydantic_init_subclass__(**kwargs)
 
         # Reset cached JSON schema to prevent inheriting it from parent class
         cls.cached_jsonschema = {}
 
-        credentials_fields = [
-            field_name
+        credentials_fields = cls.get_credentials_fields()
+
+        for field_name in cls.get_fields():
+            if is_credentials_field_name(field_name):
+                if field_name not in credentials_fields:
+                    raise TypeError(
+                        f"Credentials field '{field_name}' on {cls.__qualname__} "
+                        f"is not of type {CredentialsMetaInput.__name__}"
+                    )
+
+                credentials_fields[field_name].validate_credentials_field_schema(cls)
+
+            elif field_name in credentials_fields:
+                raise KeyError(
+                    f"Credentials field '{field_name}' on {cls.__qualname__} "
+                    "has invalid name: must be 'credentials' or *_credentials"
+                )
+
+    @classmethod
+    def get_credentials_fields(cls) -> dict[str, type[CredentialsMetaInput]]:
+        return {
+            field_name: info.annotation
             for field_name, info in cls.model_fields.items()
             if (
                 inspect.isclass(info.annotation)
@@ -162,32 +195,20 @@ class BlockSchema(BaseModel):
                     CredentialsMetaInput,
                 )
             )
-        ]
-        if len(credentials_fields) > 1:
-            raise ValueError(
-                f"{cls.__qualname__} can only have one CredentialsMetaInput field"
-            )
-        elif (
-            len(credentials_fields) == 1
-            and credentials_fields[0] != CREDENTIALS_FIELD_NAME
-        ):
-            raise ValueError(
-                f"CredentialsMetaInput field on {cls.__qualname__} "
-                "must be named 'credentials'"
-            )
-        elif (
-            len(credentials_fields) == 0
-            and CREDENTIALS_FIELD_NAME in cls.model_fields.keys()
-        ):
-            raise TypeError(
-                f"Field 'credentials' on {cls.__qualname__} "
-                f"must be of type {CredentialsMetaInput.__name__}"
-            )
-        if credentials_field := cls.model_fields.get(CREDENTIALS_FIELD_NAME):
-            credentials_input_type = cast(
-                CredentialsMetaInput, credentials_field.annotation
-            )
-            credentials_input_type.validate_credentials_field_schema(cls)
+        }
+
+    @classmethod
+    def get_input_defaults(cls, data: BlockInput) -> BlockInput:
+        return data  # Return as is, by default.
+
+    @classmethod
+    def get_missing_links(cls, data: BlockInput, links: list["Link"]) -> set[str]:
+        input_fields_from_nodes = {link.sink_name for link in links}
+        return input_fields_from_nodes - set(data)
+
+    @classmethod
+    def get_missing_input(cls, data: BlockInput) -> set[str]:
+        return cls.get_required_fields() - set(data)
 
 
 BlockSchemaInputType = TypeVar("BlockSchemaInputType", bound=BlockSchema)
@@ -205,7 +226,7 @@ class BlockManualWebhookConfig(BaseModel):
     the user has to manually set up the webhook at the provider.
     """
 
-    provider: str
+    provider: ProviderName
     """The service provider that the webhook connects to"""
 
     webhook_type: str
@@ -260,7 +281,7 @@ class Block(ABC, Generic[BlockSchemaInputType, BlockSchemaOutputType]):
         test_input: BlockInput | list[BlockInput] | None = None,
         test_output: BlockData | list[BlockData] | None = None,
         test_mock: dict[str, Any] | None = None,
-        test_credentials: Optional[Credentials] = None,
+        test_credentials: Optional[Credentials | dict[str, Credentials]] = None,
         disabled: bool = False,
         static_output: bool = False,
         block_type: BlockType = BlockType.STANDARD,
@@ -297,15 +318,21 @@ class Block(ABC, Generic[BlockSchemaInputType, BlockSchemaOutputType]):
         self.static_output = static_output
         self.block_type = block_type
         self.webhook_config = webhook_config
-        self.execution_stats = {}
+        self.execution_stats: NodeExecutionStats = NodeExecutionStats()
 
         if self.webhook_config:
             if isinstance(self.webhook_config, BlockWebhookConfig):
                 # Enforce presence of credentials field on auto-setup webhook blocks
-                if CREDENTIALS_FIELD_NAME not in self.input_schema.model_fields:
+                if not (cred_fields := self.input_schema.get_credentials_fields()):
                     raise TypeError(
                         "credentials field is required on auto-setup webhook blocks"
                     )
+                # Disallow multiple credentials inputs on webhook blocks
+                elif len(cred_fields) > 1:
+                    raise ValueError(
+                        "Multiple credentials inputs not supported on webhook blocks"
+                    )
+
                 self.block_type = BlockType.WEBHOOK
             else:
                 self.block_type = BlockType.WEBHOOK_MANUAL
@@ -348,6 +375,14 @@ class Block(ABC, Generic[BlockSchemaInputType, BlockSchemaOutputType]):
         Run the block with the given input data.
         Args:
             input_data: The input data with the structure of input_schema.
+
+        Kwargs: Currently 14/02/2025 these include
+            graph_id: The ID of the graph.
+            node_id: The ID of the node.
+            graph_exec_id: The ID of the graph execution.
+            node_exec_id: The ID of the node execution.
+            user_id: The ID of the user.
+
         Returns:
             A Generator that yields (output_name, output_data).
             output_name: One of the output name defined in Block's output_schema.
@@ -361,18 +396,29 @@ class Block(ABC, Generic[BlockSchemaInputType, BlockSchemaOutputType]):
                 return data
         raise ValueError(f"{self.name} did not produce any output for {output}")
 
-    def merge_stats(self, stats: dict[str, Any]) -> dict[str, Any]:
-        for key, value in stats.items():
-            if isinstance(value, dict):
-                self.execution_stats.setdefault(key, {}).update(value)
-            elif isinstance(value, (int, float)):
-                self.execution_stats.setdefault(key, 0)
-                self.execution_stats[key] += value
-            elif isinstance(value, list):
-                self.execution_stats.setdefault(key, [])
-                self.execution_stats[key].extend(value)
+    def merge_stats(self, stats: NodeExecutionStats) -> NodeExecutionStats:
+        stats_dict = stats.model_dump()
+        current_stats = self.execution_stats.model_dump()
+
+        for key, value in stats_dict.items():
+            if key not in current_stats:
+                # Field doesn't exist yet, just set it, but this will probably
+                # not happen, just in case though so we throw for invalid when
+                # converting back in
+                current_stats[key] = value
+            elif isinstance(value, dict) and isinstance(current_stats[key], dict):
+                current_stats[key].update(value)
+            elif isinstance(value, (int, float)) and isinstance(
+                current_stats[key], (int, float)
+            ):
+                current_stats[key] += value
+            elif isinstance(value, list) and isinstance(current_stats[key], list):
+                current_stats[key].extend(value)
             else:
-                self.execution_stats[key] = value
+                current_stats[key] = value
+
+        self.execution_stats = NodeExecutionStats(**current_stats)
+
         return self.execution_stats
 
     @property
@@ -416,9 +462,9 @@ class Block(ABC, Generic[BlockSchemaInputType, BlockSchemaOutputType]):
 
 
 def get_blocks() -> dict[str, Type[Block]]:
-    from backend.blocks import AVAILABLE_BLOCKS  # noqa: E402
+    from backend.blocks import load_all_blocks
 
-    return AVAILABLE_BLOCKS
+    return load_all_blocks()
 
 
 async def initialize_blocks() -> None:

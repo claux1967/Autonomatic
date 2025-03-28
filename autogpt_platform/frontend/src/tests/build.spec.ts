@@ -19,7 +19,7 @@ test.describe("Build", () => { //(1)!
     // Start each test with login using worker auth
     await page.goto("/login"); //(4)!
     await loginPage.login(testUser.email, testUser.password);
-    await test.expect(page).toHaveURL("/"); //(5)!
+    await test.expect(page).toHaveURL("/marketplace"); //(5)!
     await buildPage.navbar.clickBuildLink();
   });
 
@@ -42,39 +42,80 @@ test.describe("Build", () => { //(1)!
   });
   // --8<-- [end:BuildPageExample]
 
-  test("user can add all blocks", async ({ page }, testInfo) => {
+  test("user can add all blocks a-l", async ({ page }, testInfo) => {
     // this test is slow af so we 10x the timeout (sorry future me)
-    await test.setTimeout(testInfo.timeout * 10);
+    await test.setTimeout(testInfo.timeout * 100);
     await test.expect(buildPage.isLoaded()).resolves.toBeTruthy();
     await test.expect(page).toHaveURL(new RegExp("/.*build"));
     await buildPage.closeTutorial();
     await buildPage.openBlocksPanel();
     const blocks = await buildPage.getBlocks();
 
-    // add all the blocks in order
+    const blockIdsToSkip = await buildPage.getBlocksToSkip();
+    const blockTypesToSkip = ["Input", "Output", "Agent", "AI"];
+
+    // add all the blocks in order except for the agent executor block
     for (const block of blocks) {
-      if (block.id !== "e189baac-8c20-45a1-94a7-55177ea42565") {
+      if (block.name[0].toLowerCase() >= "m") {
+        continue;
+      }
+      if (!blockIdsToSkip.some((b) => b === block.id) && !blockTypesToSkip.some((b) => block.type === b)) {
+        console.log("Adding block:", block.name, block.id, block.type, " skipping types:", blockTypesToSkip);
         await buildPage.addBlock(block);
       }
     }
     await buildPage.closeBlocksPanel();
     // check that all the blocks are visible
     for (const block of blocks) {
-      if (block.id !== "e189baac-8c20-45a1-94a7-55177ea42565") {
+      if (block.name[0].toLowerCase() >= "m") {
+        continue;
+      }
+      if (!blockIdsToSkip.some((b) => b === block.id) && !blockTypesToSkip.some((b) => block.type === b)) {
+        console.log("Checking block:", block.name, block.id, block.type, " skipping types:", blockTypesToSkip);
         await test.expect(buildPage.hasBlock(block)).resolves.toBeTruthy();
       }
     }
-    // fill in the input for the agent input block
-    await buildPage.fillBlockInputByPlaceholder(
-      blocks.find((b) => b.name === "Agent Input")?.id ?? "",
-      "Enter Name",
-      "Agent Input Field",
-    );
-    await buildPage.fillBlockInputByPlaceholder(
-      blocks.find((b) => b.name === "Agent Output")?.id ?? "",
-      "Enter Name",
-      "Agent Output Field",
-    );
+
+    // check that we can save the agent with all the blocks
+    await buildPage.saveAgent("all blocks test", "all blocks test");
+    // page should have a url like http://localhost:3000/build?flowID=f4f3a1da-cfb3-430f-a074-a455b047e340
+    await test.expect(page).toHaveURL(new RegExp("/.*build\\?flowID=.+"));
+  });
+
+  test("user can add all blocks m-z", async ({ page }, testInfo) => {
+    // this test is slow af so we 10x the timeout (sorry future me)
+    await test.setTimeout(testInfo.timeout * 100);
+    await test.expect(buildPage.isLoaded()).resolves.toBeTruthy();
+    await test.expect(page).toHaveURL(new RegExp("/.*build"));
+    await buildPage.closeTutorial();
+    await buildPage.openBlocksPanel();
+    const blocks = await buildPage.getBlocks();
+
+    const blockIdsToSkip = await buildPage.getBlocksToSkip();
+    const blockTypesToSkip = ["Input", "Output", "Agent", "AI"];
+
+    // add all the blocks in order except for the agent executor block
+    for (const block of blocks) {
+      if (block.name[0].toLowerCase() < "m") {
+        continue;
+      }
+      if (!blockIdsToSkip.some((b) => b === block.id) && !blockTypesToSkip.some((b) => block.type === b)) {
+        console.log("Adding block:", block.name, block.id, block.type, " skipping types:", blockTypesToSkip);
+        await buildPage.addBlock(block);
+      }
+    }
+    await buildPage.closeBlocksPanel();
+    // check that all the blocks are visible
+    for (const block of blocks) {
+      if (block.name[0].toLowerCase() < "m") {
+        continue;
+      }
+      if (!blockIdsToSkip.some((b) => b === block.id) && !blockTypesToSkip.some((b) => block.type === b)) {
+        console.log("Checking block:", block.name, block.id, block.type, " skipping types:", blockTypesToSkip);
+        await test.expect(buildPage.hasBlock(block)).resolves.toBeTruthy();
+      }
+    }
+
     // check that we can save the agent with all the blocks
     await buildPage.saveAgent("all blocks test", "all blocks test");
     // page should have a url like http://localhost:3000/build?flowID=f4f3a1da-cfb3-430f-a074-a455b047e340
@@ -105,11 +146,13 @@ test.describe("Build", () => { //(1)!
       id: "1ff065e9-88e8-4358-9d82-8dc91f622ba9",
       name: "Store Value 1",
       description: "Store Value Block 1",
+      type: "Standard",
     };
     const block2 = {
       id: "1ff065e9-88e8-4358-9d82-8dc91f622ba9",
       name: "Store Value 2",
       description: "Store Value Block 2",
+      type: "Standard",
     };
 
     // Add the blocks

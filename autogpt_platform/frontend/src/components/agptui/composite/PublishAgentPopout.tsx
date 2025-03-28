@@ -8,7 +8,10 @@ import {
   PopoverAnchor,
 } from "@/components/ui/popover";
 import { PublishAgentSelect } from "../PublishAgentSelect";
-import { PublishAgentInfo } from "../PublishAgentSelectInfo";
+import {
+  PublishAgentInfo,
+  PublishAgentInfoInitialData,
+} from "../PublishAgentSelectInfo";
 import { PublishAgentAwaitingReview } from "../PublishAgentAwaitingReview";
 import { Button } from "../Button";
 import {
@@ -45,17 +48,17 @@ export const PublishAgentPopout: React.FC<PublishAgentPopoutProps> = ({
   );
   const [myAgents, setMyAgents] = React.useState<MyAgentsResponse | null>(null);
   const [selectedAgent, setSelectedAgent] = React.useState<string | null>(null);
-  const [initialData, setInitialData] = React.useState<{
-    agent_id: string;
-    title: string;
-    subheader: string;
-    slug: string;
-    thumbnailSrc: string;
-    youtubeLink: string;
-    category: string;
-    description: string;
-    additionalImages?: string[];
-  } | null>(null);
+  const [initialData, setInitialData] =
+    React.useState<PublishAgentInfoInitialData>({
+      agent_id: "",
+      title: "",
+      subheader: "",
+      slug: "",
+      thumbnailSrc: "",
+      youtubeLink: "",
+      category: "",
+      description: "",
+    });
   const [publishData, setPublishData] =
     React.useState<StoreSubmissionRequest>(submissionData);
   const [selectedAgentId, setSelectedAgentId] = React.useState<string | null>(
@@ -73,14 +76,12 @@ export const PublishAgentPopout: React.FC<PublishAgentPopoutProps> = ({
   const { toast } = useToast();
 
   React.useEffect(() => {
-    console.log("PublishAgentPopout Effect");
     setOpen(openPopout);
     setStep(inputStep);
     setPublishData(submissionData);
   }, [openPopout]); // eslint-disable-line react-hooks/exhaustive-deps
 
   React.useEffect(() => {
-    console.log("LoadMyAgents Effect");
     if (open) {
       const loadMyAgents = async () => {
         try {
@@ -127,7 +128,7 @@ export const PublishAgentPopout: React.FC<PublishAgentPopoutProps> = ({
       title: name,
       subheader: "",
       description: description,
-      thumbnailSrc: "",
+      thumbnailSrc: selectedAgentData?.agent_image || "",
       youtubeLink: "",
       category: "",
       slug: name.replace(/ /g, "-"),
@@ -190,7 +191,6 @@ export const PublishAgentPopout: React.FC<PublishAgentPopoutProps> = ({
         slug: slug.replace(/\s+/g, "-"),
         categories: categories,
       });
-      console.log("Store submission created:", submission);
     } catch (error) {
       console.error("Error creating store submission:", error);
     }
@@ -219,7 +219,8 @@ export const PublishAgentPopout: React.FC<PublishAgentPopoutProps> = ({
                       id: agent.agent_id,
                       version: agent.agent_version,
                       lastEdited: agent.last_edited,
-                      imageSrc: "https://picsum.photos/300/200", // Fallback image if none provided
+                      imageSrc:
+                        agent.agent_image || "https://picsum.photos/300/200",
                     })) || []
                   }
                   onSelect={handleAgentSelect}
@@ -260,7 +261,7 @@ export const PublishAgentPopout: React.FC<PublishAgentPopoutProps> = ({
                   onClose={handleClose}
                   onDone={handleClose}
                   onViewProgress={() => {
-                    router.push("/store/dashboard");
+                    router.push("/profile/dashboard");
                     handleClose();
                   }}
                 />
@@ -281,7 +282,7 @@ export const PublishAgentPopout: React.FC<PublishAgentPopoutProps> = ({
       }}
     >
       <PopoverTrigger asChild>
-        {trigger || <Button variant="default">Publish Agent</Button>}
+        {trigger || <Button>Publish Agent</Button>}
       </PopoverTrigger>
       <PopoverAnchor asChild>
         <div className="fixed left-0 top-0 hidden h-screen w-screen items-center justify-center"></div>
